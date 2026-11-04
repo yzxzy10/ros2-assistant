@@ -1,0 +1,85 @@
+{
+  "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "models": {
+    "analysis": "qwen-max",
+    "analysis_repair": "qwen-flash",
+    "plan_architect": "qwen-flash",
+    "plan_guide": "qwen-flash",
+    "node_spec": "qwen-flash",
+    "coder": "qwen3-coder-flash",
+    "coder_fix": "qwen3-coder-flash",
+    "teaching": "qwen-flash",
+    "chat": "qwen-max",
+    "summary": "qwen-flash",
+    "vision": "qwen-vl-max"
+  },
+  "options": {
+    "analysis": {
+      "temperature": 0.7,
+      "top_p": 0.8
+    },
+    "analysis_repair": {
+      "temperature": 0.7,
+      "top_p": 0.8
+    },
+    "plan_architect": {
+      "temperature": 0.7,
+      "top_p": 0.8
+    },
+    "plan_guide": {
+      "temperature": 0.7,
+      "top_p": 0.8
+    },
+    "node_spec": {
+      "temperature": 0.7,
+      "top_p": 0.8
+    },
+    "coder": {
+      "temperature": 0.5,
+      "top_p": 0.8
+    },
+    "coder_fix": {
+      "temperature": 0.5,
+      "top_p": 0.8
+    },
+    "teaching": {
+      "temperature": 0.7,
+      "top_p": 0.8
+    },
+    "chat": {
+      "temperature": 0.8,
+      "top_p": 0.9
+    },
+    "summary": {
+      "temperature": 0.3,
+      "top_p": 0.8
+    },
+    "vision": {
+      "temperature": 0.1
+    }
+  },
+  "ros": {
+    "distro": "jazzy",
+    "verify": {
+      "enabled": true,
+      "backend": "auto",
+      "image": "",
+      "timeout_build_sec": 300,
+      "timeout_run_sec": 25,
+      "fix_rounds": 1
+    }
+  },
+  "multimodal": {
+    "enabled": true,
+    "max_bytes": 4194304
+  },
+  "kb": {
+    "top_k": 5,
+    "max_context_chars": 4500
+  },
+  "memory": {
+    "history_max": 30,
+    "summary_keep": 20,
+    "archive_days": 30
+  }
+}

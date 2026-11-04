@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2E1A4E"/>
+      <stop offset="0.5" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#A855F7"/>
+    </linearGradient>
+    <radialGradient id="core" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.45" stop-color="#F3E4FF"/>
+      <stop offset="1" stop-color="#C77DFF"/>
+    </radialGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角方形底（超圆润 squircle） -->
+  <rect x="3" y="3" width="58" height="58" rx="17" fill="url(#bg)"/>
+  <!-- 玻璃高光描边 -->
+  <rect x="3.75" y="3.75" width="56.5" height="56.5" rx="16.25" fill="none" stroke="#F0E6FF" stroke-opacity="0.4" stroke-width="1.4"/>
+  <!-- 顶部高光 -->
+  <path d="M5 20a14 14 0 0 1 14-14h26a14 14 0 0 1 14 14v8H5z" fill="url(#shine)" opacity="0.28"/>
+
+  <!-- 原子轨道（倾斜椭圆环） -->
+  <ellipse cx="32" cy="32" rx="19" ry="8.5" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-opacity="0.95" transform="rotate(-28 32 32)"/>
+  <ellipse cx="32" cy="32" rx="19" ry="8.5" fill="none" stroke="#ffffff" stroke-width="0.6" stroke-opacity="0.35" transform="rotate(62 32 32)"/>
+
+  <!-- 电子点 -->
+  <circle cx="15.5" cy="23.5" r="2.7" fill="#ffffff"/>
+  <circle cx="48.5" cy="23.5" r="2.7" fill="#ffffff"/>
+  <circle cx="32" cy="46.5" r="2.7" fill="#ffffff"/>
+
+  <!-- 中心发光核 -->
+  <circle cx="32" cy="32" r="11" fill="#C77DFF" opacity="0.28"/>
+  <circle cx="32" cy="32" r="6.8" fill="url(#core)"/>
+</svg>
