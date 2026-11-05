@@ -10,6 +10,14 @@
     sid = "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     localStorage.setItem("ros2tutor_sid", sid);
   }
+  // ?sid=xxx 可直接打开某段会话（分享项目、排障时用）
+  try {
+    var _qs = new URLSearchParams(location.search).get("sid");
+    if (_qs && /^[A-Za-z0-9_-]{6,64}$/.test(_qs) && _qs !== sid) {
+      sid = _qs;
+      localStorage.setItem("ros2tutor_sid", sid);
+    }
+  } catch (e) {}
 
   // 学生身份：由服务端签发（HttpOnly Cookie 里的签名 uid），前端只做展示缓存。
   // 请求里带的 userId 服务端一律忽略，所以改 localStorage 冒充不了别人。
@@ -87,11 +95,19 @@
 
   function handleAuthError(e) {
     if (e && e.needToken) { showGate(e.message); return true; }
-    if (e && e.status === 403) { showGate(e.message); return true; }
+    // 403 但服务端没说要令牌：是「这段会话不属于当前身份」（常见于重新部署后身份被重置），
+    // 输令牌解决不了，直接丢掉旧会话号并重载，用户无感换到新会话。
+    if (e && e.status === 403) {
+      try { localStorage.removeItem("ros2tutor_sid"); } catch (_) {}
+      location.reload();
+      return true;
+    }
     return false;
   }
 
-  marked.setOptions({
+  // CDN 挂了（断网答辩、内网演示）也不能让整个界面崩掉：
+  // marked 缺失时退化为「转义 + 保留换行」，功能降级但不白屏。
+  if (window.marked) marked.setOptions({
     breaks: true,
     highlight: function (code, lang) {
       try {
@@ -105,8 +121,13 @@
   });
 
   function md(text) {
-    var html = marked.parse(text || "");
-    return html;
+    text = text || "";
+    if (!window.marked) {
+      return String(text).replace(/[&<>]/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c];
+      }).replace(/\n/g, "<br>");
+    }
+    return marked.parse(text);
   }
 
   // 代码块增强：给每个 <pre> 加「语言标签 + 复制按钮」工具条
@@ -226,8 +247,15 @@
     el.title = "已导入项目，AI 会基于它继续开发";
   }
 
+  // 会话里有没有「可看的架构图」：生成过节点、或导入过别人的工作区。
+  // 有就必须给一个常驻入口 —— 只靠「生成完毕」那张一次性卡片，
+  // 一旦漏看（或页面是旧版 JS）就再也没有办法打开图了。
+  var hasGraphArtifact = false;
+
   function renderSidebar(data) {
     renderImportedBadge(data.imported_project);
+    hasGraphArtifact = !!(data.imported_project && data.imported_project.name) ||
+      (data.nodes || []).some(function (n) { return n.generated; });
     // 节点清单
     var nodesEl = $("nodes");
     if (data.nodes && data.nodes.length) {
@@ -244,20 +272,34 @@
       });
     }
     // 文件树
+    renderFiles(data.files);
+  }
+
+  // 文件树单独拎出来：架构图提交后要让左栏立刻看到新生成的文件，
+  // 不能等下一轮对话才刷新。
+  function renderFiles(list) {
     var filesEl = $("files");
-    if (data.files && data.files.length) {
+    if (!filesEl) return;
+    var has = !!(list && list.length);
+    if (has) {
       filesEl.innerHTML = "";
-      data.files.forEach(function (f) {
+      list.forEach(function (f) {
         var d = document.createElement("div");
         d.className = "file-item";
         d.textContent = "📄 " + f;
         filesEl.appendChild(d);
       });
-      $("download-zip").classList.remove("hidden");
     } else {
-      $("download-zip").classList.add("hidden");
+      filesEl.innerHTML = "生成的节点代码会保存在这里";
     }
+    $("project-acts").classList.toggle("hidden", !(has || hasGraphArtifact));
   }
+
+  window.RTRefreshFiles = function () {
+    return fetch("/api/files/" + sid).then(function (r) { return r.json(); })
+      .then(function (d) { renderFiles((d && d.files) || []); })
+      .catch(function () {});
+  };
 
   function renderProfile(d) {
     var el = $("profile");
@@ -524,6 +566,11 @@
         ctx.body.appendChild(bar);
       }
       renderOptions(ev.options, ev.options_mode);
+      // 代码刚生成完：问一句要不要进架构图手动改（开关关掉就不问）
+      if (ev.graph_ready) {
+        if (window.RTPulseGraphEntry) window.RTPulseGraphEntry();
+        if (askGraphOn()) ctx.body.appendChild(graphOffer(ev.graph_ready));
+      }
       renderSidebar(ev);
       renderHistoryList();
       refreshProfile();
@@ -629,6 +676,13 @@
   function importProject(files) {
     var list = Array.prototype.slice.call(files || []);
     if (!list.length) return;
+    // 一个会话只有一个工作区：再次导入是**覆盖**，不是追加。
+    // 覆盖会 rmtree 旧目录，不可恢复，所以先问一句。
+    var badge = $("imported-badge");
+    if (badge && !badge.classList.contains("hidden")
+        && !window.confirm("这个会话里已经有一个项目了。\n\n继续导入会覆盖它：旧文件（含生成过的节点代码）会被清空，无法恢复。\n想留着就先点「下载整个工作区」。\n\n确定覆盖？")) {
+      return;
+    }
     var items = [], total = 0;
     list.forEach(function (f) {
       var rel = (f.webkitRelativePath || f.name || "").replace(/\\/g, "/");
@@ -636,7 +690,10 @@
       if (seg.length > 1) seg.shift();     // 去掉选中的顶层文件夹名
       rel = seg.join("/");
       if (!rel || !PROJECT_ALLOWED.test(rel)) return;
-      if (f.size > 1 * 1024 * 1024) return;          // 单文件 ≤ 1MB
+      // 源码单文件限 1MB；压缩包不能套这个限制（真实项目 zip 常有几 MB），
+      // 否则选了 zip 会被静默跳过，用户只会看到「没反应」。总量仍限 100MB。
+      var isArchive = /\.(zip|tar|gz|tgz|bz2|xz|zst|7z|rar)$/i.test(rel);
+      if (!isArchive && f.size > 1 * 1024 * 1024) return;
       total += f.size;
       if (total > 100 * 1024 * 1024) return;         // 总量 ≤ 100MB
       f._rel = rel;
@@ -660,17 +717,86 @@
       addMsg("assistant", md("✅ " + (d.message || "项目导入成功")));
       refreshSession();
       refreshProfile();
+      if (window.RTGraph) window.RTGraph.reload();   // 导入完立刻出图
     }).catch(function (e) {
       if (!handleAuthError(e)) {
         addMsg("assistant", md("⚠️ 项目导入失败：" + (e.message || e)));
       }
     });
   }
+  // 导入入口做成二选一：文件夹 / zip。
+  // 原来点一下只能选目录（input 带 webkitdirectory），浏览框里 zip 是灰的，选不了。
+  var importMenu = $("import-menu");
+  var projectZip = $("project-zip");
+  function closeImportMenu() { if (importMenu) importMenu.classList.add("hidden"); }
+  function openImportMenu(btn) {
+    if (!importMenu) return;
+    importMenu.classList.remove("hidden");
+    var r = btn.getBoundingClientRect();
+    var w = importMenu.offsetWidth || 232;
+    var h = importMenu.offsetHeight || 96;
+    var left = Math.max(10, Math.min(r.left, window.innerWidth - w - 10));
+    var top = r.top - h - 8;                       // 默认往上弹（输入框在底部）
+    if (top < 10) top = r.bottom + 8;              // 上面放不下就往下
+    importMenu.style.left = left + "px";
+    importMenu.style.top = top + "px";
+  }
   if ($("import-project")) {
-    $("import-project").onclick = function () { projectInput && projectInput.click(); };
+    $("import-project").onclick = function (ev) {
+      ev.stopPropagation();
+      openImportMenu(ev.currentTarget);
+    };
+  }
+  document.addEventListener("click", function (ev) {
+    if (importMenu && !importMenu.classList.contains("hidden")
+        && !importMenu.contains(ev.target)) closeImportMenu();
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape") closeImportMenu();
+  });
+  if ($("pick-folder")) {
+    $("pick-folder").onclick = function () { closeImportMenu(); projectInput && projectInput.click(); };
+  }
+  if ($("pick-zip")) {
+    $("pick-zip").onclick = function () { closeImportMenu(); projectZip && projectZip.click(); };
   }
   if (projectInput) {
     projectInput.onchange = function () { importProject(projectInput.files); projectInput.value = ""; };
+  }
+  if (projectZip) {
+    projectZip.onchange = function () { importProject(projectZip.files); projectZip.value = ""; };
+  }
+
+  // 移除当前项目：只清空工作区，聊天记录保留
+  var REMOVE_LABEL = '<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v6M14 11v6"/></svg> 移除';
+  if ($("remove-project")) {
+    $("remove-project").onclick = function () {
+      var ok = window.confirm(
+        "移除后会清空这个会话里的项目文件（含生成过的节点代码）。\n" +
+        "聊天记录会保留，之后可以重新导入或直接说想做什么。\n\n" +
+        "如果要连聊天记录一起删，用左边会话列表里的删除。\n\n确定移除？");
+      if (!ok) return;
+      var btn = $("remove-project");
+      btn.disabled = true;
+      btn.innerHTML = "正在移除…";
+      apiFetch("/api/project/remove", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: sid })
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        btn.disabled = false;
+        btn.innerHTML = REMOVE_LABEL;
+        if (!d.ok) throw new Error(d.message || "移除失败");
+        renderFiles([]);
+        renderImportedBadge(null);
+        addMsg("assistant", md("🗑️ " + (d.message || "已移除项目") +
+          "\n\n画布已清空。你可以点左下角文件夹重新导入，也可以直接说「我想做一个避障小车」。"));
+        if (window.RTGraph) window.RTGraph.reload();
+      }).catch(function (e) {
+        btn.disabled = false;
+        btn.innerHTML = REMOVE_LABEL;
+        if (!handleAuthError(e)) addMsg("assistant", md("⚠️ 移除失败：" + (e.message || e)));
+      });
+    };
   }
 
   // 直接粘贴截图（答辩演示时最快的一条路）
@@ -706,7 +832,14 @@
     e.preventDefault();
     dragDepth = 0;
     mask.classList.add("hidden");
-    if (e.dataTransfer && e.dataTransfer.files) addFiles(e.dataTransfer.files);
+    var fl = (e.dataTransfer && e.dataTransfer.files) || [];
+    if (!fl.length) return;
+    // 拖进来的是 zip：当作项目导入（后端会解压），别当截图去上传
+    if (fl.length === 1 && /\.zip$/i.test(fl[0].name)) {
+      importProject(fl);
+      return;
+    }
+    addFiles(fl);
   });
 
   function imgPayload() {
@@ -823,10 +956,23 @@
     li.onclick = function () { doSend(li.textContent); };
   });
 
-  $("download-zip").onclick = function () {
+  // 下载整个工作区：左栏按钮和架构图提交面板共用这一个出口，
+  // 保证两处下到的是同一个文件（否则开了令牌校验时架构图那边会 401）。
+  function downloadWorkspace() {
     var u = "/api/files/" + sid + "/zip";
     if (token) u += "?token=" + encodeURIComponent(token);   // 浏览器直下带不了 header
     window.location.href = u;
+  }
+  window.RTDownloadWorkspace = downloadWorkspace;
+  $("download-zip").onclick = downloadWorkspace;
+  if ($("open-graph")) $("open-graph").onclick = function () { openGraphPane(); };
+  window.RTPulseGraphEntry = function () {
+    var b = $("open-graph");
+    if (!b) return;
+    b.classList.remove("pulse");
+    void b.offsetWidth;                 // 强制重排，让动画能重播
+    b.classList.add("pulse");
+    setTimeout(function () { b.classList.remove("pulse"); }, 6000);
   };
 
   // 健康检查
@@ -1102,6 +1248,80 @@
     mask.onclick = close;
   }
 
+  // ---------------- 生成完毕后的「要不要看架构图」邀请 ----------------
+  // 项目流水线跑完，代码已经落进 ros2_ws 了，这时候才谈得上"改图"。
+  // 是否弹这张卡由顶栏开关控制，关掉就不再打扰。
+  var ASK_KEY = "rt_ask_graph";
+
+  function askGraphOn() {
+    try { return localStorage.getItem(ASK_KEY) !== "0"; } catch (e) { return true; }
+  }
+  function setAskGraph(on) {
+    try { localStorage.setItem(ASK_KEY, on ? "1" : "0"); } catch (e) {}
+    var btn = $("ask-graph-toggle");
+    if (!btn) return;
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+    btn.title = on
+      ? "代码生成完成后会问你：要不要打开架构图手动调整（点击关闭）"
+      : "已关闭：生成后不再提示看架构图（点击开启）";
+  }
+  function openGraphPane() {
+    var pane = $("graph-pane");
+    if (pane) {
+      pane.classList.remove("hidden");
+      pane.classList.remove("collapsed");
+    }
+    if (window.RTGraph) {
+      // 面板是我们先展开的，graph.js 的「首次显示自动 fit」就不会触发，
+      // 这里必须显式补一次，否则从入口打开时图还是上次的缩放，节点跑出画面。
+      window.RTGraph.reload().then(function (d) {
+        var n = ((d && d.nodes) || []).length;
+        if (!n) {
+          // 纯 C++ 项目、或 .py 里没有 rclpy 节点：图里本来就没东西，
+          // 面板会自己收起来。不说清楚，用户会以为按钮坏了。
+          var cmake = ((d && d.packages) || []).some(function (p) {
+            return (p.build_type || "").indexOf("cmake") >= 0;
+          });
+          window.RT.toast(cmake
+            ? "这个项目是 C++（ament_cmake）的，架构图目前只解析 Python 节点，所以图上是空的；左侧文件树、看代码、下载 zip 都正常。"
+            : "这个项目里没找到 rclpy 节点（没有 create_publisher / create_subscription），架构图暂时是空的。");
+          return;
+        }
+        setTimeout(function () { window.RTGraph.fit(); }, 80);
+      });
+    }
+  }
+  function graphOffer(info) {
+    var d = document.createElement("div");
+    d.className = "graph-offer";
+    d.innerHTML =
+      '<div class="go-title">代码已经写进项目了 · ' + (info.nodes || 0) + " 个节点</div>" +
+      '<div class="go-desc">要不要打开架构图看一眼？图上能改话题名、右键增删节点、' +
+      "从端口拖线重连。这些操作只改图纸，点右上角「提交」才会同步回代码。</div>" +
+      '<div class="go-actions">' +
+      '<button class="mini-btn primary" data-act="yes">打开架构图</button>' +
+      '<button class="mini-btn" data-act="no">先不看</button>' +
+      '<label class="go-remember"><input type="checkbox" data-act="quiet">以后不问</label>' +
+      "</div>";
+    d.addEventListener("click", function (ev) {
+      var act = ev.target && ev.target.getAttribute && ev.target.getAttribute("data-act");
+      if (act === "yes") { openGraphPane(); d.classList.add("gone"); }
+      else if (act === "no") { d.classList.add("gone"); }
+    });
+    var quiet = d.querySelector('[data-act="quiet"]');
+    if (quiet) quiet.onchange = function () { if (quiet.checked) setAskGraph(false); };
+    return d;
+  }
+  function initAskGraph() {
+    setAskGraph(askGraphOn());          // 把保存的状态同步到开关上
+    var btn = $("ask-graph-toggle");
+    if (btn) {
+      btn.onclick = function () {
+        setAskGraph(btn.getAttribute("aria-pressed") !== "true");
+      };
+    }
+  }
+
   function boot() {
     ensureIdentity().then(function () {
       checkHealth();
@@ -1116,8 +1336,19 @@
     });
   }
 
+  // 对外桥接：架构图模块（graph.js）复用同一套身份、令牌与会话号
+  window.RT = {
+    getSid: function () { return sid; },
+    apiFetch: apiFetch,
+    md: md,
+    toast: function (text, kind) {
+      addMsg("assistant", md((kind === "error" ? "⚠️ " : "") + text));
+    }
+  };
+
   initTheme();
   initDrawer();
+  initAskGraph();
   boot();
   input.focus();
 })();

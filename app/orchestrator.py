@@ -471,6 +471,24 @@ def _reply(md, options=None, options_mode=None, stages=None, sess=None):
     return r
 
 
+def _mark_graph_ready(r, sess):
+    """代码生成完毕：给前端一个「要不要打开架构图手动改」的信号。
+
+    只有真的落了代码才算数（node_list 里 generated 的数量 > 0），
+    规划完还没生成、或生成失败的回复不该弹这个邀请 —— 图里没东西可改。
+    """
+    names = set(sess.generated or [])
+    names |= {n.get("node_name") for n in (sess.node_list or []) if n.get("generated")}
+    names.discard("")
+    names.discard(None)
+    done = len(names)
+    if done <= 0:
+        return r
+    r["graph_ready"] = {"nodes": done, "total": len(sess.node_list or []),
+                        "pending": sess.pending or ""}
+    return r
+
+
 # ============ 单节点生成（模式3 与 选项C/D 共用） ============
 
 def _gen_single_node(cfg, sess, spec, label, expected_name=None):
@@ -548,7 +566,7 @@ def _gen_single_node(cfg, sess, spec, label, expected_name=None):
             md.append("```\n%s\n```" % verify["log"])
             md.append("\n</details>")
         sess.save()
-        return _reply("\n".join(md), sess=sess)
+        return _mark_graph_ready(_reply("\n".join(md), sess=sess), sess)
 
 
 def _find_node(sess, name):
@@ -926,9 +944,10 @@ def _gen_batch(cfg, sess, stages=None):
         return _reply("\n\n---\n\n".join(parts) + tail, stages=stages, sess=sess)
     sess.pending = None
     sess.save()
-    return _reply("\n\n---\n\n".join(parts) +
-                  "\n\n全部节点生成完毕🎉 可到右侧「项目文件」下载整个工作区。",
-                  stages=stages, sess=sess)
+    return _mark_graph_ready(
+        _reply("\n\n---\n\n".join(parts) +
+               "\n\n全部节点生成完毕🎉 可到右侧「项目文件」下载整个工作区。",
+               stages=stages, sess=sess), sess)
 
 
 def _expand_choice(sess, msg):

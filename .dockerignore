@@ -1,0 +1,21 @@
+# 不进镜像的东西
+.env
+.env.local
+.git/
+.gitignore
+
+# 运行时数据（镜像里是空的，运行后由卷提供）
+data/
+sessions/
+archive/
+server.log
+
+# 原始素材与测试
+_source/
+tests/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.vscode/
+.idea/

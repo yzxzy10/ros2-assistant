@@ -1,0 +1,30 @@
+# 一条命令起服务：docker compose up -d
+#
+# 数据持久化：命名卷 ros2-data 挂在容器的 /data，
+# 对应 sessions/、data/profile.db、archive/，容器重建、镜像升级都不会丢。
+# 想用宿主机目录也行，把 volumes 换成：./var:/data  （记得先 mkdir var）
+
+services:
+  ros2-tutor:
+    build: .
+    image: ros2-tutor:latest
+    container_name: ros2-tutor
+    restart: unless-stopped
+    ports:
+      # 前面有 Nginx 反代时建议改成 "127.0.0.1:8000:8000"，只监听回环
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      ROS2_DATA_DIR: /data
+      PORT: "8000"
+    volumes:
+      - ros2-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  ros2-data:

@@ -27,7 +27,7 @@ from app.config import load_config, api_configured, key_hint, CONFIG_PATH
 from app.kb import get_retriever
 from app import (orchestrator, store, archive, auth, env, paths,
                  identity, ratelimit, vision, versions, sandbox,
-                 project_import)
+                 project_import, graph_api)
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 PUBLIC = os.path.join(_ROOT, "public")
@@ -325,6 +325,26 @@ class Handler(BaseHTTPRequestHandler):
                     "history": sess.history,
                     "transcript": sess.transcript,
                 })
+            elif path == "/api/graph":
+                sid = self._query().get("sid", "")
+                if not _SAFE_SID.match(sid):
+                    return self._json({"error": "bad session id"}, 400)
+                sess = orchestrator.get_session(sid)
+                self._claim(sess, bound)
+                if not self._may_access(bound, sess.user_id):
+                    return self._json({"error": "forbidden", "message": "无权访问该会话"}, 403)
+                self._json(graph_api.load(sess))
+            elif path == "/api/graph/node":
+                sid = self._query().get("sid", "")
+                rel = self._query().get("path", "")
+                if not _SAFE_SID.match(sid):
+                    return self._json({"error": "bad session id"}, 400)
+                sess = orchestrator.get_session(sid)
+                self._claim(sess, bound)
+                if not self._may_access(bound, sess.user_id):
+                    return self._json({"error": "forbidden", "message": "无权访问该会话"}, 403)
+                res = graph_api.read_node_source(sess, rel)
+                self._json(res, 200 if res.get("ok") else 400)
             elif path.startswith("/api/files/") and path.endswith("/zip"):
                 sid = path[len("/api/files/"):-len("/zip")]
                 if not _SAFE_SID.match(sid):
@@ -340,6 +360,10 @@ class Handler(BaseHTTPRequestHandler):
                         for fn in files:
                             full = os.path.join(dirpath, fn)
                             z.write(full, "ros2_ws/" + os.path.relpath(full, root).replace("\\", "/"))
+                    # 图纸跟项目一起走：拿到 zip 的人在本地也能还原这张架构图
+                    gp = graph_api.draft_path(sess)
+                    if os.path.isfile(gp):
+                        z.write(gp, "架构图.json")
                 data = buf.getvalue()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/zip")
@@ -357,6 +381,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not self._may_access(bound, sess.user_id):
                     return self._json({"error": "forbidden", "message": "无权访问该会话"}, 403)
                 self._json({"files": sess.file_tree()})
+            elif not path.startswith("/api/"):
+                # 打错的页面路径（如 /**、/home）统一回首页，不甩 JSON 404
+                self._static("index.html")
             else:
                 self._json({"error": "not found"}, 404)
         except BrokenPipeError:
@@ -376,16 +403,22 @@ class Handler(BaseHTTPRequestHandler):
                 return
             return self._session_action(bound, path)
         if path not in ("/api/archive", "/api/chat", "/api/chat/stream",
-                        "/api/upload", "/api/project/import"):
-            return self._json({"error": "not found"}, 404)
+                        "/api/upload", "/api/project/import",
+                        "/api/project/remove"):
+            if not path.startswith("/api/graph/"):
+                return self._json({"error": "not found"}, 404)
         kind = "chat" if path.startswith("/api/chat") else "api"
         ok, bound = self._guard(kind)
         if not ok:
             return
+        if path.startswith("/api/graph/"):
+            return self._graph_post(bound, path)
         if path == "/api/upload":
             return self._upload(bound)
         if path == "/api/project/import":
             return self._project_import(bound)
+        if path == "/api/project/remove":
+            return self._project_remove(bound)
         if path == "/api/archive":
             body = self._read_body()
             days = body.get("days")
@@ -458,6 +491,44 @@ class Handler(BaseHTTPRequestHandler):
                     "url": "/api/uploads/%s/%s.%s" % (sid, res["id"], res["ext"])})
 
 
+    def _graph_post(self, bound, path):
+        """架构图的写操作：草稿、代码保存、简介、提交。
+
+        图纸改动只落 graph.json；只有 commit 会碰代码。
+        """
+        body = self._read_body(8 << 20)
+        sid = str(body.get("sessionId") or "")
+        if not _SAFE_SID.match(sid):
+            return self._json({"error": "bad session id"}, 400)
+        sess = orchestrator.get_session(sid)
+        self._claim(sess, bound)
+        if not self._may_access(bound, sess.user_id):
+            return self._json({"error": "forbidden", "message": "无权访问该会话"}, 403)
+
+        if path == "/api/graph/draft":
+            graph_api.save_draft(sess, body.get("draft") or {})
+            return self._json({"ok": True})
+        if path == "/api/graph/node":
+            res = graph_api.save_node_source(
+                sess, str(body.get("path") or ""),
+                body.get("content") if isinstance(body.get("content"), str) else "",
+                str(body.get("sha") or ""))
+            return self._json(res, 200 if (res.get("ok") or res.get("saved")) else 400)
+        if path in ("/api/graph/intro", "/api/graph/commit"):
+            cfg = current_config()
+            if not api_configured(cfg):
+                return self._json({"error": "模型未配置", "message":
+                                   "这一项需要模型：请先在服务端配置 API Key"}, 503)
+            if path == "/api/graph/intro":
+                with sess.lock:
+                    res = graph_api.node_intro(sess, cfg, str(body.get("id") or ""))
+                return self._json(res, 200 if res.get("ok") else 400)
+            with sess.lock:
+                res = graph_api.commit(sess, cfg, body)
+            return self._json(res, 200 if res.get("ok") else 400)
+        return self._json({"error": "not found"}, 404)
+
+
     def _project_import(self, bound):
         """接收用户导入的 ROS2 项目（文件列表），识别并落到会话工作区。
 
@@ -496,6 +567,22 @@ class Handler(BaseHTTPRequestHandler):
             "files": sess.file_tree(),
             "nodes": [],
         })
+
+    def _project_remove(self, bound):
+        """移除当前会话里的项目（清空工作区），聊天记录保留。"""
+        body = self._read_body()
+        sid = str(body.get("sessionId") or "")
+        if not _SAFE_SID.match(sid):
+            return self._json({"error": "bad session id"}, 400)
+        sess = orchestrator.get_session(sid)
+        self._claim(sess, bound)
+        if not self._may_access(bound, sess.user_id):
+            return self._json({"error": "forbidden", "message": "无权访问该会话"}, 403)
+        with sess.lock:
+            ok, msg = project_import.remove_from_session(sess)
+        return self._json({"ok": ok, "message": msg,
+                           "imported_project": None,
+                           "files": sess.file_tree(), "nodes": []})
 
 
     def _session_action(self, bound, path):

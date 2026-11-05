@@ -1,0 +1,42 @@
+# ROS2 学习助手 —— 带编译验证的镜像
+#
+# 与默认 Dockerfile 的区别：基础镜像换成官方 ros:jazzy-ros-base，
+# 容器里自带 ROS 2 Jazzy + colcon，编译验证走 local 后端，不需要 Docker-in-Docker。
+#
+# 代价：镜像从 ~150MB 涨到 ~900MB。只想聊天、不需要编译验证时用默认 Dockerfile。
+#
+# 构建：docker build -f Dockerfile.verify -t ros2-tutor:jazzy .
+# 版本：目标发行版写死为 jazzy，与 config.json 的 ros.distro 保持一致。
+
+FROM ros:jazzy-ros-base
+
+# colcon 在 ros-base 里不一定自带，显式装上；清 apt 缓存控制体积
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      python3-colcon-common-extensions \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=8000 \
+    ROS2_DATA_DIR=/data \
+    ROS_DISTRO=jazzy \
+    ROS2_VERIFY_BACKEND=local \
+    ROS_LOCALHOST_ONLY=1 \
+    ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+
+# 让 colcon / ros2 在非交互 shell 里也能用（local 后端不 source 也能跑）
+RUN printf 'source /opt/ros/jazzy/setup.bash\n' >> /root/.bashrc
+
+COPY . /app
+RUN mkdir -p /data
+
+VOLUME ["/data"]
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD python3 -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).status==200 else 1)"
+
+CMD ["python3", "-X", "utf8", "server.py"]

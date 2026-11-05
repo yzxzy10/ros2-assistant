@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ROS2 学习助手 · Jazzy/Python</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/static/style.css?v=18">
+<link rel="stylesheet" href="/static/style.css?v=40">
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
@@ -48,8 +48,12 @@
         <span class="panel-title-label"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>项目文件</span>
       </div>
       <div id="imported-badge" class="imported-badge hidden"></div>
+      <div id="project-acts" class="proj-acts hidden">
+        <button id="open-graph" class="btn ghost" title="打开通信架构图：图上能改话题名、增删节点、拖线重连"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="7" height="6" rx="1.5"/><rect x="14" y="14" width="7" height="6" rx="1.5"/><path d="M10 7h4a2 2 0 0 1 2 2v5"/></svg> 架构图</button>
+        <button id="download-zip" class="btn ghost" title="把整个工作区打包下载到本地"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg> 下载 zip</button>
+        <button id="remove-project" class="btn ghost danger" title="把当前项目从这个会话里删掉，聊天记录保留"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M7 7l1 13h8l1-13M10 11v6M14 11v6"/></svg> 移除</button>
+      </div>
       <div id="files" class="files-empty">生成的节点代码会保存在这里</div>
-      <button id="download-zip" class="btn ghost hidden"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg> 下载整个工作区 (zip)</button>
     </div>
 
     <div class="tips">
@@ -72,6 +76,12 @@
         <div id="kb-info" class="kb-info"></div>
         <div id="ver-badge" class="ver-badge"></div>
       </details>
+      <button id="ask-graph-toggle" class="theme-toggle" type="button" aria-pressed="true"
+              title="代码生成完成后，询问你是否打开架构图手动调整">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="7" height="6" rx="1.5"/><rect x="14" y="14" width="7" height="6" rx="1.5"/><path d="M10 7h4a2 2 0 0 1 2 2v5"/></svg>
+        <span>生成后提示看图</span>
+        <span class="side-switch"><span class="ms-knob"></span></span>
+      </button>
       <button id="theme-toggle" class="theme-toggle" title="切换深色 / 浅色">
         <svg class="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13A8 8 0 1 1 11 4a6 6 0 0 0 9 9z"/></svg>
         <svg class="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
@@ -86,33 +96,88 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
       <span class="topbar-title">ROS2 学习助手</span>
+      <button id="toggle-graph" class="mini-btn" title="显示 / 收起架构图">架构图</button>
     </header>
-    <div id="chat"></div>
-    <div id="options-bar"></div>
-    <footer id="composer">
-      <div id="img-strip" class="img-strip hidden"></div>
-      <div class="composer-row">
-        <button id="import-project" class="icon-btn" type="button"
-                title="导入你的 ROS2 项目（选择项目文件夹，识别后可继续开发）">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6M9 14l3-3 3 3"/></svg>
-        </button>
-        <button id="pick-img" class="icon-btn" type="button"
-                title="上传截图（支持直接粘贴或拖入）">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M3 17l5-5 4 4 3-3 6 6"/></svg>
-        </button>
-        <textarea id="input" rows="1" placeholder="输入消息…（Enter 发送，Shift+Enter 换行，可直接粘贴截图）"></textarea>
-        <button id="send">发送</button>
-      </div>
-      <input id="img-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"
-             multiple hidden>
-      <input id="project-file" type="file" webkitdirectory multiple hidden>
-    </footer>
+
+    <div id="workbench">
+      <section id="graph-pane" class="hidden" aria-label="ROS2 架构图">
+        <div class="gp-top">
+          <span class="gp-title">通信架构图</span>
+          <span id="gp-meta" class="gp-meta"></span>
+          <div class="gp-actions">
+            <button id="gp-add" class="mini-btn" title="在画布上新建一个节点">新建节点</button>
+            <button id="gp-fit" class="mini-btn" title="适应窗口">适应</button>
+            <span class="gp-zoom">
+              <button id="gp-zoom-out" class="icon-btn sm" title="缩小">−</button>
+              <span id="gp-zoom">100%</span>
+              <button id="gp-zoom-in" class="icon-btn sm" title="放大">+</button>
+            </span>
+            <button id="gp-commit" class="mini-btn primary" title="把图纸上的改动写进代码">提交</button>
+            <button id="gp-collapse" class="mini-btn" title="收起架构图">收起</button>
+          </div>
+        </div>
+        <div class="gp-rail" id="gp-rail" title="展开架构图">架构图</div>
+        <div class="gp-body">
+          <div class="gp-canvas" id="gp-canvas">
+            <svg id="gp-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+            <div class="gp-empty" id="gp-empty">
+              还没有项目可画。<br>
+              左边点文件夹图标导入现成项目（或把 .zip 拖进来）；<br>
+              也可以直接跟它说「我想做一个避障小车」，代码生成完会问你要不要接着改这张图。
+            </div>
+            <div class="gp-hint" id="gp-hint"></div>
+            <div class="gp-legend">
+              <span><i class="lg-line"></i>已生成</span>
+              <span><i class="lg-line dash"></i>未生成</span>
+              <span><i class="lg-dot"></i>未解析接口</span>
+            </div>
+          </div>
+          <aside class="gp-drawer hidden" id="gp-drawer"></aside>
+        </div>
+      </section>
+
+      <div id="gp-split" class="gp-split" title="拖动调整左右宽度 · 双击恢复默认"></div>
+
+      <section id="chat-pane">
+        <div id="chat"></div>
+        <div id="options-bar"></div>
+        <footer id="composer">
+          <div id="img-strip" class="img-strip hidden"></div>
+          <div class="composer-row">
+            <button id="import-project" class="icon-btn" type="button"
+                    title="导入你的 ROS2 项目：选择项目文件夹，或选 / 拖入 .zip 压缩包">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v6M9 14l3-3 3 3"/></svg>
+            </button>
+            <div id="import-menu" class="import-menu hidden">
+              <button type="button" id="pick-folder" class="im-item">
+                <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+                <span><b>选择项目文件夹</b><i>选整个 ROS2 工作空间目录</i></span>
+              </button>
+              <button type="button" id="pick-zip" class="im-item">
+                <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M12 5v3M12 10v3M12 15v1"/></svg>
+                <span><b>选择 zip 压缩包</b><i>自动解压，跳过 build/install</i></span>
+              </button>
+            </div>
+            <button id="pick-img" class="icon-btn" type="button"
+                    title="上传截图（支持直接粘贴或拖入）">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="8.5" cy="10" r="1.5"/><path d="M3 17l5-5 4 4 3-3 6 6"/></svg>
+            </button>
+            <textarea id="input" rows="1" placeholder="输入消息…（Enter 发送，Shift+Enter 换行，可直接粘贴截图）"></textarea>
+            <button id="send">发送</button>
+          </div>
+          <input id="img-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"
+                 multiple hidden>
+          <input id="project-file" type="file" webkitdirectory multiple hidden>
+          <input id="project-zip" type="file" accept=".zip,application/zip,application/x-zip-compressed" hidden>
+        </footer>
+      </section>
+    </div>
   </main>
 </div>
 
 <div id="drawer-mask" class="hidden"></div>
 
-<div id="drop-mask" class="hidden"><span>松手即可上传截图</span></div>
+<div id="drop-mask" class="hidden"><span>松手即可导入项目（zip）或上传截图</span></div>
 
 <div id="token-gate" class="hidden">
   <div class="gate-card">
@@ -127,6 +192,7 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=18"></script>
+<script src="/static/app.js?v=40"></script>
+<script src="/static/graph.js?v=40"></script>
 </body>
 </html>

@@ -12,7 +12,7 @@
 
 | 是什么 | 当前值 | 在哪里改 | 影响范围 |
 |---|---|---|---|
-| **系统软件版本** | `v1.1.0` | `app/versions.py` → `APP_VERSION` | 启动日志、`/api/meta`、界面徽标 |
+| **系统软件版本** | `v1.2.3` | `app/versions.py` → `APP_VERSION` | 启动日志、`/api/meta`、界面徽标 |
 | **目标 ROS 发行版** | `jazzy`（Jazzy Jalisco） | `config.json` → `ros.distro` | 提示词约束、沙箱镜像、界面标注、知识库版本提示 |
 | **编译沙箱镜像** | `ros:jazzy-ros-base` | `config.json` → `ros.verify.image` | 编译验证实际使用的容器 |
 
@@ -38,7 +38,7 @@
 > 与目标版本不同。系统会在检索结果前加 `【来源版本】ROS 2 kilted` 标注，
 > 并由提示词要求冲突时以目标版本为准；详见 `kb_data/SOURCES.md`。
 
-## 当前功能状态（截至 2026-11-01）
+## 当前功能状态（截至 2026-11-05）
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
@@ -47,6 +47,9 @@
 | 工作流② 项目规划 | ✅ 完成 | 节点规划 + 学习指南 + 知识库注入，A/B/C/D 选项流转 |
 | 工作流③ 代码生成 | ✅ 完成 | 节点规格 → 知识库检索 → 代码 → AST 检查 → 修复循环 → **编译验证** → 教学讲解 |
 | 编译验证（沙箱） | ✅ 完成 | 生成 ament_python 包 → `colcon build` → 起节点 → `ros2 node list`；失败日志回灌修复器 |
+| **知识图谱（通信图谱）** | ✅ 完成 | AST 解析项目里的节点/话题/服务/消息类型并出交互图，支持草稿编辑、`commit` 改图写回代码（详见下文） |
+| **项目导入** | ✅ 完成 | 选文件夹或上传 zip/tar，自动解压并识别包/节点/launch/接口，作为后续开发上下文；支持二进制、单文件 50MB / 总量 100MB |
+| **会话管理** | ✅ 完成 | 侧栏历史会话列表、整段回放（transcript）、单会话删除/归档；规划待办态问新问题可自动退出不再卡死 |
 | 版本口径统一 | ✅ 完成 | 单一事实来源 `app/versions.py`；目标 Jazzy，Humble 为兼容分支（见上表） |
 | 知识库检索 | ✅ 完成 | 内置 BM25，15 个文件 / 1550 个文档块（一条记录一块），top_k=5 |
 | 直接回答 | ✅ 完成 | 报错三段式 / 概念 / 练习题 / FAQ / 闲聊，画像注入提示词 |
@@ -59,9 +62,9 @@
 | 限流与保险丝 | ✅ 完成 | 每身份 20 次/分对话、120 次/分读接口；全站每日 2000 次对话封顶 |
 | 密钥管理 | ✅ 完成 | 密钥只从环境变量/.env 读，config.json 无任何密钥 |
 | 数据持久化 | ✅ 完成 | `ROS2_DATA_DIR` 统一 sessions/data/archive；Docker 命名卷挂 /data |
-| 前端 | ✅ 完成 | 聊天 UI、流式光标、画像面板、节点清单、文件树、zip 下载、令牌弹层 |
-| 测试 | ✅ 完成 | 5 个测试脚本（详见「测试结果」节），全绿 |
-| **公网部署** | ⬜ 待做 | 代码与配置就绪（Dockerfile/compose），尚未有域名与线上实例 |
+| 前端 | ✅ 完成 | 聊天 UI + 流式光标 + 画像面板 + 节点清单 + 文件树 + **通信图谱** + **暗色模式** + 移动端抽屉 |
+| 测试 | ✅ 完成 | 19 个测试脚本（含图谱/导入/会话/安全/记忆等）；核心离线测试全绿，10 个 UI 自动化测试需额外装 `websocket-client`（详见「测试结果」节） |
+| **公网部署** | 🟡 演示已上线 | 已有在线演示实例；生产化（自有域名 + HTTPS + 反代）仍待做，Dockerfile/compose 已就绪 |
 
 ## 相较最初「工作流 + 主调度员」的提升
 
@@ -238,9 +241,44 @@ docker run -d -p 8000:8000 --env-file .env -v ros2-data:/data ros2-tutor:jazzy
 }
 ```
 
-## 测试结果（2026-11-01 全量回归）
+## 知识图谱 · ROS2 通信拓扑
 
-自动化测试（全部通过）：
+把「项目里谁发谁收、用什么消息类型」画成一张可交互的图，不用学生在多个文件里对着消息名找。
+
+### 怎么解析的（AST，不用正则）
+
+`app/graph.py` 用 Python `ast` 解析会话工作区里的源码，口径是「宁可标未解析，也不猜」：
+
+| 解析对象 | 依据 |
+|---|---|
+| 节点 | 继承 `rclpy` `Node` 的类；模块级 `rclpy` 调用时用文件名兜底 |
+| 节点名 | `super().__init__("名字")` 的第一个字符串字面量 |
+| 接口 | `create_publisher` / `create_subscription` / `create_service` / `create_client` / ActionClient / ActionServer |
+| 消息类型 | 顺着 `import` 反推成 `std_msgs/msg/String` 这类标准写法，解析不出就保留原文 |
+| 话题名 | 只认字符串字面量；f-string / 变量 / 拼接 → `resolved=False` |
+| 连线 | 同名话题下 publisher → subscriber 的有向边；动态话题进 `unresolved`，图上用虚线提示 |
+
+产物写在 `sessions/<sid>/graph.json`，草图另存 `graph_draft.json`；`build/install/log/.git` 等目录自动跳过。
+
+### 三个阶段：看 → 改 → 落
+
+`app/graph_api.py` 把图谱做成「草稿（draft）→ 审阅（intro）→ 提交（commit）」三段式：
+
+| 阶段 | 接口 | 作用 |
+|---|---|---|
+| 看 | `GET /api/graph` | 返回节点、连线、包与未解析项 |
+| 改 | `POST /api/graph/draft`、`POST /api/graph/node` | 保存节点位置 / 重命名 / 删除 / 新增草稿节点，只动 `.json` 草稿 |
+| 落 | `POST /api/graph/commit` | **唯一**会把图纸改动写回源码的接口 |
+
+> 安全边界：`commit` 会改代码，属于强操作；它只作用于当前会话自己导入/生成的工作区，不触碰其他会话。
+
+### 前端
+
+`public/graph.js` 渲染可拖拽的节点图（发布者/订阅者按话题连线、未解析项画虚线），并带「询问 Graph」入口（`ask-graph-toggle`）——可以直接对着图问「这条话题谁在发、谁在收」，回答沿用主调度员的风格。
+
+## 测试结果（2026-11-05 更新）
+
+自动化测试共 **19 个脚本**（`tests/`）；下表是核心的离线/端到端回归，另外 10 个是浏览器自动化（UI）测试，需先 `pip install websocket-client`。核心离线测试（如 `security_test.py` 40/40）无需任何第三方依赖：
 
 | 测试 | 结果 | 覆盖 |
 |---|---|---|
@@ -274,8 +312,8 @@ docker run -d -p 8000:8000 --env-file .env -v ros2-data:/data ros2-tutor:jazzy
 
 **P0 · 上线前必做**
 
-1. **公网部署**：买一台 1C2G 云主机（或任一容器平台），`docker compose up -d` + Nginx 反代 + HTTPS。
-   代码侧零改动；Nginx 记得 `proxy_buffering off`（SSE）并设 `ROS2_TRUST_PROXY=1`。
+1. **公网部署**：已有在线演示实例；生产化（自有域名 + HTTPS + 反代）仍待做。
+   代码侧零改动，`docker compose up -d` 即可；Nginx 记得 `proxy_buffering off`（SSE）并设 `ROS2_TRUST_PROXY=1`。
 2. **身份跟人走**：当前清 Cookie/换浏览器 = 新身份。公开给学生用前，做令牌分发（`ROS2_AUTH_TOKEN=xxx:u_学号`
    已支持）或简单的邀请码/注册页。
 3. **用量可视化**：加一张 `usage` 表记录每身份每次对话的 token 消耗，做一个最小管理页——
@@ -289,12 +327,12 @@ docker run -d -p 8000:8000 --env-file .env -v ros2-data:/data ros2-tutor:jazzy
    顺带统计修复循环成功率、追问点击率。
 6. **画像面板增强**：导出/清空按钮（「我的数据」），概念掌握度可视化。
 7. **练习题判分**：练习题目前只出题不批改，可接代码校验器做自动判分——校验器是现成的。
-8. **会话管理**：会话列表、历史回放、误选 A 后能回退重选。
+8. ~~会话管理~~（**已实现**：会话列表 / 历史回放 / 删除 / 归档）；剩「误选 A 后回退重选」未做。
 
 **P2 · 工程**
 
 9. `server.py` 按路由拆模块；`ThreadingHTTPServer` 换异步框架仅在并发上来后考虑。
-10. orchestrator 状态机补单元测试（现在主要靠 e2e 覆盖）；加 CI 在每次提交时跑全部 5 个测试。
+10. 状态机补更多单元测试（现主要靠 e2e 与 graph/import 测试覆盖）；加 CI 在每次提交时跑全部 19 个测试（UI 测试需先装 `websocket-client`）。
 11. 前端移动端适配；教师端视图（查看全班学习画像）。
 
 **刻意不做的**：注册中心/多租户（当前规模不需要）、MySQL/Postgres（SQLite 量级足够，接口层已隔离可随时换）。
@@ -309,6 +347,10 @@ docker run -d -p 8000:8000 --env-file .env -v ros2-data:/data ros2-tutor:jazzy
 - **知识库**：内置 BM25 检索（15 个文件 / 1550 个文档块），自动注入报错排查、概念讲解、
   项目规划与代码生成
 - **直接回答**：报错排查（三段式）/ 概念讲解 / 练习题 / 闲聊，均按主调度员提示词风格
+- **项目导入**：选中已有 ROS2 项目文件夹，或直接上传 zip/tar，自动解压并识别包/节点/launch/接口，
+  作为后续开发的上下文（支持二进制文件，单文件 50MB / 总量 100MB）
+- **通信图谱**：把项目里的节点、话题、服务、消息类型解析成可交互的拓扑图，支持改图后写回代码
+- **会话管理**：侧栏历史会话列表、整段回放、单会话删除/归档
 - **项目文件**：生成的节点代码实时保存到会话工作区，网页端可浏览并可一键下载 zip
 
 ## 快速开始
@@ -459,13 +501,18 @@ ros2-assistant/
 ├── config.json          # 模型与记忆参数（不含任何密钥）
 ├── .env                 # 密钥/令牌/数据目录（已被 .gitignore 排除，勿提交）
 ├── .env.example         # 配置模板
-├── Dockerfile
+├── Dockerfile           # 默认镜像（仅 Python，~150MB，沙箱降级）
+├── Dockerfile.verify    # ros:jazzy-ros-base 镜像（真编译验证用，~900MB）
 ├── docker-compose.yml   # 一条命令部署，命名卷挂 /data
+├── start.bat            # Windows 一键启动
 ├── app/
 │   ├── identity.py      # 匿名身份（HMAC 签名 Cookie，uid 由服务端签发）
 │   ├── ratelimit.py     # 每分钟限流 + 全站每日保险丝
-│   ├── orchestrator.py  # 主调度员状态机（总路由/流水线/选项流转/状态追踪）
+│   ├── orchestrator.py  # 主调度员状态机（总路由/流水线/选项流转/状态追踪/会话历史）
 │   ├── progress.py      # 进度事件（分步状态 + 2 秒心跳 + 耗时统计）
+│   ├── graph.py         # ROS2 通信图谱解析（AST：节点/话题/服务/消息类型/连线）
+│   ├── graph_api.py     # 图谱 草稿→审阅→提交（commit 才写回代码）
+│   ├── project_import.py# 项目导入（文本/二进制/zip·tar 解压 + 结构识别）
 │   ├── vision.py        # 截图理解（魔数校验/内容寻址落盘/结构化识别/缓存）
 │   ├── versions.py      # 版本单一事实来源（系统版本 + ROS 发行版表 + 提示词约束）
 │   ├── sandbox.py       # 编译验证沙箱（docker/local/mock/none 四后端 + 降级）
@@ -482,13 +529,14 @@ ros2-assistant/
 │   ├── paths.py         # 数据目录统一入口（ROS2_DATA_DIR 可指向挂载卷）
 │   ├── prompts.py       # 全部提示词（逐字取自工作流与主调度员提示词）
 │   └── llm.py           # OpenAI 兼容客户端
-├── kb_data/             # 知识库（来自 数据.zip；来源与版本见 SOURCES.md）
-├── public/              # 前端（聊天 UI + 学习画像 + 节点清单 + 文件树 + 令牌弹层）
-├── tests/               # e2e_mock / memory_test / security_test / smoke_http /
-│                        #   multimodal_progress_test / sandbox_version_test
+├── kb_data/             # 知识库（15 文件 / 1550 块；来源与版本见 SOURCES.md）
+├── public/              # 前端（聊天 UI + 画像 + 节点清单 + 文件树 + 通信图谱 + 暗色 + 移动抽屉）
+├── samples/             # demo_ros2_ws.zip（示例项目）+ make_dist.py（打包脚本）
+├── tests/               # 19 个测试：security/identity/memory/e2e_mock/sandbox_version/
+│                        #   multimodal_progress/graph_*/import_*/commit_*/drawer_*/smoke_http
 ├── data/profile.db      # 学习画像数据库（SQLite，自动创建，可被 ROS2_DATA_DIR 改位置）
 ├── archive/             # 归档的旧会话 zip
-└── sessions/            # 会话状态与生成的工作区文件
+└── sessions/            # 会话状态、生成/导入的工作区文件、graph.json
 ```
 
 ## 记忆系统
