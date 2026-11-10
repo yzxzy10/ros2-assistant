@@ -437,6 +437,13 @@ body {
 .prog-step.fail .sign { background: #dc2626; border-color: #dc2626; }
 .prog-step.skip .sign { border-style: dashed; }
 .prog-step .lbl { font-weight: 600; white-space: nowrap; }
+.prog-step .who {
+  font-size: 11px; padding: 1px 7px; border-radius: 999px;
+  background: var(--accent-soft, rgba(124, 58, 237, 0.12));
+  color: var(--accent, #7c3aed); white-space: nowrap;
+  border: 1px solid var(--accent-line, rgba(124, 58, 237, 0.28));
+}
+.prog-step .who.hidden { display: none; }
 .prog-step .det {
   color: var(--muted); font-size: 12px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

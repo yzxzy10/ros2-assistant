@@ -1,0 +1,50 @@
+{
+  "name": "ros2-learning-orchestrator",
+  "version": "1.1.0",
+  "description": "A beginner-friendly ROS2 Humble Python learning orchestrator that routes requirements, project planning, and single-node code generation workflows.",
+  "author": {
+    "name": "WorkBuddy User"
+  },
+  "agents": ["./agents/ros2-learning-orchestrator.md"],
+  "skills": ["./skills/ros2-workflow-orchestration"],
+  "expertType": "agent",
+  "agentName": "ros2-learning-orchestrator",
+  "displayName": {
+    "en": "ROS2 Learning Orchestrator",
+    "zh": "ROS2学习主调度员"
+  },
+  "profession": {
+    "en": "ROS2 Learning Workflow Coordinator",
+    "zh": "ROS2学习规划与代码调度助手"
+  },
+  "displayDescription": {
+    "en": "Guides ROS2 Humble Python beginners through requirements, project plans, checked node code, troubleshooting, and exercises with explicit workflow orchestration.",
+    "zh": "面向ROS2初学者，串联需求分析、项目规划与代码生成工作流，提供讲解、报错排查、练习及代码交付。"
+  },
+  "avatar": "avatars/expert.png",
+  "categoryId": "02-Engineering",
+  "defaultInitPrompt": {
+    "zh": "帮我用 ROS2 Humble 和 Python 做一个激光雷达避障小车项目。",
+    "en": "Help me build a lidar-based obstacle-avoidance robot project with ROS2 Humble and Python."
+  },
+  "plugin": "ros2-learning-orchestrator",
+  "tags": [
+    { "en": "ROS2 Humble", "zh": "ROS2 Humble" },
+    { "en": "Project Planning", "zh": "项目规划" },
+    { "en": "Workflow Orchestration", "zh": "工作流调度" }
+  ],
+  "quickPrompts": [
+    {
+      "zh": "帮我用 ROS2 Humble 和 Python 做一个激光雷达避障小车项目。",
+      "en": "Help me build a lidar-based obstacle-avoidance robot project with ROS2 Humble and Python."
+    },
+    {
+      "zh": "用 ROS2 Humble 和 Python 写一个发布者节点，并讲讲关键代码。",
+      "en": "Write a publisher node with ROS2 Humble and Python, then explain the key code."
+    },
+    {
+      "zh": "我的 ROS2 Python 节点报 ImportError 了，帮我定位原因并给出修复步骤。",
+      "en": "My ROS2 Python node raises ImportError. Help me diagnose it and provide the fix."
+    }
+  ]
+}

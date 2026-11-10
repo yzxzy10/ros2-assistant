@@ -18,6 +18,7 @@ from . import llm
 from . import store
 from . import paths
 from . import progress
+from . import agents
 from . import vision
 from . import versions
 from . import sandbox
@@ -502,7 +503,7 @@ def _gen_single_node(cfg, sess, spec, label, expected_name=None):
     ctx = _imported_context(sess)
     if ctx:
         spec_in = ctx + "\n\n【节点规格】\n" + spec
-    with progress.step("code", "代码生成", "正在生成 %s" % label):
+    with agents.run("coder", "正在生成 %s" % label, artifact="节点规格 JSON"):
         env = wf_code.run(cfg, spec_in)
         if not env.get("valid"):
             # 重试 1 次
@@ -596,13 +597,13 @@ def _spec_json(node):
 
 def _pipeline_step1(cfg, sess, full_desc):
     """需求分析（重试 1 次 → 兜底）。"""
-    stages = ["需求分析"]
+    stages = [agents.name_of("need_analyst")]
     profile_text = _profile_context(sess)
     desc = full_desc
     ctx = _imported_context(sess)
     if ctx:
         desc = ctx + "\n\n" + full_desc
-    with progress.step("analyze", "需求分析"):
+    with agents.run("need_analyst", "把需求收敛成功能规格", artifact="学生原话"):
         env = wf_need.run(cfg, desc, leader_context="", history="",
                           level_hint=sess.level, profile=profile_text)
         if not env.get("valid"):
@@ -654,9 +655,9 @@ def _pipeline_step1(cfg, sess, full_desc):
 
 def _pipeline_step2(cfg, sess, full_desc, stages=None):
     """项目规划。"""
-    stages = (stages or []) + ["ros2项目规划"]
+    stages = (stages or []) + [agents.name_of("architect")]
     req_json = json.dumps(sess.need_data, ensure_ascii=False) if sess.need_data else full_desc
-    with progress.step("plan", "项目规划"):
+    with agents.run("architect", "细化节点规格与通信拓扑", artifact="功能规格 JSON"):
         res = wf_plan.run(cfg, req_json)
         if not res.get("valid"):
             # 重试 1 次
@@ -694,6 +695,7 @@ def _pipeline_step2(cfg, sess, full_desc, stages=None):
 # ============ 直接回答 ============
 
 def _direct_answer(cfg, sess, msg, kind, stages):
+    agents.mark("answerer", "学生问题 + 检索依据")
     kbcfg = cfg.get("kb", {})
     with progress.step("retrieve", "检索依据"):
         context, source_count = get_retriever().context(
@@ -740,7 +742,8 @@ def _direct_answer(cfg, sess, msg, kind, stages):
 
     try:
         if _emitter() is not None:
-            with progress.step("answer", "生成回答") as _p:
+            with progress.step("answer", agents.name_of("answerer"),
+                               agent=agents.name_of("answerer")) as _p:
                 if _p is not None:
                     _p.note("流式输出中")
                 parts = []
@@ -753,7 +756,8 @@ def _direct_answer(cfg, sess, msg, kind, stages):
                         raise
                 answer = "".join(parts)
         else:
-            with progress.step("answer", "生成回答"):
+            with progress.step("answer", agents.name_of("answerer"),
+                               agent=agents.name_of("answerer")):
                 answer = llm.chat(cfg, "chat", sys_p, user, history=sess.history)
     except Exception as e:
         return _reply("抱歉，我这边暂时连不上大脑（%s）。请稍后再试，或检查服务端模型配置。"
@@ -918,7 +922,7 @@ def _pending_nodes(sess):
 
 
 def _gen_batch(cfg, sess, stages=None):
-    stages = (stages or []) + ["ros2代码生成"]
+    stages = (stages or []) + [agents.name_of("coder")]
     pend = _pending_nodes(sess)
     if not pend:
         sess.pending = None
@@ -927,8 +931,8 @@ def _gen_batch(cfg, sess, stages=None):
                       "也可以继续问我问题。", stages=stages, sess=sess)
     batch = pend if len(pend) <= 2 else pend[:2]
     parts = []
-    with progress.step("code", "代码生成", "本批 %d 个节点，共 %d 个待生成"
-                       % (len(batch), len(pend))):
+    with agents.run("coder", "本批 %d 个节点，共 %d 个待生成"
+                    % (len(batch), len(pend)), artifact="节点规格 JSON"):
         for node in batch:
             r = _gen_single_node(cfg, sess, _spec_json(node), node["node_name"],
                                  expected_name=node.get("node_name"))
@@ -968,12 +972,16 @@ def _expand_choice(sess, msg):
 
 def handle(cfg, sid, message, user_id=None, images=None):
     sess = get_session(sid)
+    agents.reset()                       # 每次请求一条新轨迹
     with sess.lock:
         if user_id and user_id != sess.user_id:
             sess.user_id = user_id
         _sync_profile(sess)
         _record_transcript(sess, message, "user")
         res = _handle_locked(cfg, sess, message, images)
+        if isinstance(res, dict):
+            res["agents"] = agents.trace()
+            res["agent_chain"] = agents.handoff_line()
         if isinstance(res, dict) and res.get("reply"):
             _record_transcript(sess, res.get("reply"), "assistant")
         return res
@@ -1064,7 +1072,7 @@ def _handle_locked(cfg, sess, message, images=None):
     # 报错截图 / 代码截图：直接走诊断链路，不进项目流水线
     if v and v.get("ok") and (v.get("kind") in ("error", "code")
                               or vision.looks_like_error(v.get("text"))):
-        r = _direct_answer(cfg, sess, msg, "error", ["直接回答"])
+        r = _direct_answer(cfg, sess, msg, "error", [agents.name_of("answerer")])
         r["reply"] = "> 📷 识别为：**%s**\n\n%s" % (
             v.get("title") or "截图", r["reply"])
         r["vision"] = {"kind": v.get("kind"), "title": v.get("title", "")}
@@ -1076,7 +1084,7 @@ def _handle_locked(cfg, sess, message, images=None):
         kind = "concept" if (v or {}).get("kind") in ("slide", "diagram",
                                                       "hardware") \
             else _classify_direct(msg)
-        r = _direct_answer(cfg, sess, msg, kind, ["直接回答"])
+        r = _direct_answer(cfg, sess, msg, kind, [agents.name_of("answerer")])
         if (v or {}).get("ok"):
             r["reply"] = "> 📷 识别为：**%s**\n\n%s" % (
                 v.get("title") or "截图", r["reply"])
@@ -1151,4 +1159,4 @@ def _handle_locked(cfg, sess, message, images=None):
 
     # 4. 直接回答
     kind = _classify_direct(msg)
-    return _direct_answer(cfg, sess, msg, kind, ["直接回答"])
+    return _direct_answer(cfg, sess, msg, kind, [agents.name_of("answerer")])

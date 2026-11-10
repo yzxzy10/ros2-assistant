@@ -423,7 +423,8 @@
       if (steps[id]) return steps[id];
       var li = document.createElement("li");
       li.className = "prog-step pending";
-      li.innerHTML = '<i class="sign"></i><span class="lbl"></span>' +
+      li.innerHTML = '<i class="sign"></i><span class="who hidden"></span>' +
+                     '<span class="lbl"></span>' +
                      '<span class="det"></span><span class="t"></span>';
       li.querySelector(".lbl").textContent = label || id;
       listEl.appendChild(li);
@@ -454,6 +455,10 @@
         var li = ensure(v.id, v.label);
         if (v.label) li.querySelector(".lbl").textContent = v.label;
         if (v.detail) li.querySelector(".det").textContent = v.detail;
+        if (v.agent) {
+          var who = li.querySelector(".who");
+          if (who) { who.textContent = v.agent; who.classList.remove("hidden"); }
+        }
         if (v.state === "start") {
           order.forEach(function (id) {           // 上一步没收到 done 也收尾
             if (id !== v.id && steps[id].classList.contains("running")) {

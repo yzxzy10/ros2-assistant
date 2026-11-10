@@ -27,7 +27,7 @@ from app.config import load_config, api_configured, key_hint, CONFIG_PATH
 from app.kb import get_retriever
 from app import (orchestrator, store, archive, auth, env, paths,
                  identity, ratelimit, vision, versions, sandbox,
-                 project_import, graph_api)
+                 project_import, graph_api, agents)
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 PUBLIC = os.path.join(_ROOT, "public")
@@ -220,6 +220,10 @@ class Handler(BaseHTTPRequestHandler):
                 info["kb"] = {"docs": get_retriever().N,
                               "files": len({s for s, _t in get_retriever().docs})}
                 self._json(info)
+            elif path == "/api/agents":
+                # 协作角色清单：让「多 Agent」可被外部核验，而不是只写在 PPT 里
+                self._json({"agents": agents.all_agents(),
+                            "count": len(agents.all_agents())})
             elif path == "/api/health":
                 ip = auth.client_ip(self.headers, self.client_address[0])
                 okip, why_ip = auth.allowed_ip(ip)

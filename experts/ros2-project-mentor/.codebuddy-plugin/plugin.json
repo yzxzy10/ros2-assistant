@@ -1,0 +1,50 @@
+{
+  "name": "ros2-project-mentor",
+  "version": "1.0.0",
+  "description": "ROS2 project planning, runnable C++/Python package generation, robot debugging, and adaptive technical teaching.",
+  "author": {
+    "name": "WorkBuddy User"
+  },
+  "agents": ["./agents/ros2-project-mentor.md"],
+  "skills": ["./skills/ros2-engineering-playbook"],
+  "expertType": "agent",
+  "agentName": "ros2-project-mentor",
+  "displayName": {
+    "en": "ROS2 Planning & Teaching Expert",
+    "zh": "ROS2规划与教学专家"
+  },
+  "profession": {
+    "en": "ROS2 Project Architecture & Teaching Mentor",
+    "zh": "ROS2项目架构与教学导师"
+  },
+  "displayDescription": {
+    "en": "Plans ROS2 projects, generates C++/Python packages, diagnoses communication and simulation issues, and teaches robot development through runnable examples.",
+    "zh": "提供ROS2项目规划、双语言功能包生成、通信排障与分层教学，交付结构规范、可构建运行的机器人工程。"
+  },
+  "avatar": "avatars/expert.png",
+  "categoryId": "02-Engineering",
+  "defaultInitPrompt": {
+    "en": "Help me plan a ROS2 Humble project: define the package structure, nodes, topics and message types, then provide complete runnable code and verification steps.",
+    "zh": "帮我规划一个ROS2 Humble项目：设计功能包结构、节点、话题和消息类型，并给出完整可运行代码与验证步骤。"
+  },
+  "plugin": "ros2-project-mentor",
+  "tags": [
+    { "en": "Project Planning", "zh": "项目规划" },
+    { "en": "Package Development", "zh": "功能包开发" },
+    { "en": "Debugging & Teaching", "zh": "排障与教学" }
+  ],
+  "quickPrompts": [
+    {
+      "en": "Help me plan a ROS2 Humble project: define the package structure, nodes, topics and message types, then provide complete runnable code and verification steps.",
+      "zh": "帮我规划一个ROS2 Humble项目：设计功能包结构、节点、话题和消息类型，并给出完整可运行代码与验证步骤。"
+    },
+    {
+      "en": "Generate a ROS2 C++ package using a custom message for publisher-subscriber communication, including interfaces, build files, launch and tests.",
+      "zh": "生成一个使用自定义消息的ROS2 C++发布订阅功能包，包含接口、构建文件、launch和测试。"
+    },
+    {
+      "en": "My ROS2 simulation has a problem. Analyze the cause from my logs, provide diagnostic commands and a minimal fix, and explain the underlying concepts.",
+      "zh": "我的ROS2仿真出错了。请根据日志定位原因，给出诊断命令和最小修复，并讲清相关知识点。"
+    }
+  ]
+}

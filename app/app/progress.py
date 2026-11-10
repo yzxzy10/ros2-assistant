@@ -76,7 +76,7 @@ class Progress(object):
             })
 
     # ---------- 步骤 ----------
-    def step_begin(self, sid, label, detail=""):
+    def step_begin(self, sid, label, detail="", agent=""):
         with self._lock:
             depth = self._depth.get(sid, 0) + 1
             self._depth[sid] = depth
@@ -85,11 +85,13 @@ class Progress(object):
                     self.current["detail"] = detail
                     self.note(detail)
                 return
-            cur = {"id": sid, "label": label, "detail": detail, "t0": time.time()}
+            cur = {"id": sid, "label": label, "detail": detail,
+                   "agent": agent or "", "t0": time.time()}
             self.current = cur
             self._steps.append(cur)
         self._send("progress", {"id": sid, "label": label, "state": "start",
-                                "detail": detail, "elapsed": 0.0,
+                                "detail": detail, "agent": cur["agent"],
+                                "elapsed": 0.0,
                                 "total_elapsed": self.elapsed()})
 
     def step_end(self, sid, state="done", detail=""):
@@ -106,6 +108,7 @@ class Progress(object):
             "label": cur.get("label", sid),
             "state": state,
             "detail": detail or cur.get("detail", ""),
+            "agent": cur.get("agent", ""),
             "elapsed": round(time.time() - cur.get("t0", time.time()), 1),
             "total_elapsed": self.elapsed()})
 
@@ -122,12 +125,12 @@ class Progress(object):
             snap = dict(cur)
         self._send("progress", {
             "id": snap["id"], "label": snap["label"], "state": "run",
-            "detail": snap["detail"],
+            "detail": snap["detail"], "agent": snap.get("agent", ""),
             "elapsed": round(time.time() - snap["t0"], 1),
             "total_elapsed": self.elapsed()})
 
-    def step(self, sid, label, detail=""):
-        return _StepCtx(self, sid, label, detail)
+    def step(self, sid, label, detail="", agent=""):
+        return _StepCtx(self, sid, label, detail, agent)
 
     # ---------- 最终摘要 ----------
     def snapshot(self):
@@ -141,11 +144,12 @@ class Progress(object):
 class _StepCtx(object):
     """with p.step("plan", "项目规划"): ...  异常时自动标记 fail。"""
 
-    def __init__(self, p, sid, label, detail=""):
-        self.p, self.sid, self.label, self.detail = p, sid, label, detail
+    def __init__(self, p, sid, label, detail="", agent=""):
+        self.p, self.sid, self.label = p, sid, label
+        self.detail, self.agent = detail, agent
 
     def __enter__(self):
-        self.p.step_begin(self.sid, self.label, self.detail)
+        self.p.step_begin(self.sid, self.label, self.detail, self.agent)
         return self.p
 
     def __exit__(self, et, ev, tb):
@@ -170,12 +174,12 @@ def current():
     return getattr(_LOCAL, "p", None)
 
 
-def step(sid, label, detail=""):
+def step(sid, label, detail="", agent=""):
     """便捷入口：没有进度器时返回空上下文，调用方不用写判断。"""
     p = current()
     if p is None:
         return _NullCtx()
-    return p.step(sid, label, detail)
+    return p.step(sid, label, detail, agent)
 
 
 def note(detail=None, label=None):
