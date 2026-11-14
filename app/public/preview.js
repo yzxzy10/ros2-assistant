@@ -436,32 +436,59 @@
     return dispose;
   }
 
+  // 失败时留一个重试按钮：网络抽风或显存被释放后，用户点一下就能回来，
+  // 而不是只看到一句「无法展示」然后只能重新生成
+  function fail(slot, msg, sid, pkg) {
+    slot.innerHTML = '<div class="pv-empty">' + msg +
+      ' <button type="button" class="pv-retry">重试</button></div>';
+    var b = slot.querySelector(".pv-retry");
+    if (b) b.onclick = function () { mount(slot, sid, pkg); };
+  }
+
   function mount(slot, sid, pkg) {
     slot.innerHTML = '<div class="pv-loading">正在生成模型预览…</div>';
     fetchScene(sid, pkg).then(function (data) {
       if (!data || !data.ok) {
-        slot.innerHTML = '<div class="pv-empty">无法预览：' +
-          esc((data && data.error) || "未知原因") + "</div>";
+        fail(slot, "无法预览：" + esc((data && data.error) || "未知原因"), sid, pkg);
         return;
       }
       loadThree().then(function (THREE) {
         try {
           var dispose = render(slot, data, THREE);
-          LIVE.push(dispose);
+          var entry = function () {
+            dispose();
+            slot.innerHTML = '<div class="pv-lazy">较早的预览已释放显存' +
+              ' <button type="button" class="pv-retry">重新加载</button></div>';
+            var b = slot.querySelector(".pv-retry");
+            if (b) b.onclick = function () { mount(slot, sid, pkg); };
+          };
+          LIVE.push(entry);
           while (LIVE.length > MAX_LIVE) {
             var old = LIVE.shift();
             try { old(); } catch (e) { /* 忽略 */ }
           }
         } catch (e) {
-          slot.innerHTML = '<div class="pv-empty">渲染失败：' + esc(e.message) + "</div>";
+          fail(slot, "渲染失败：" + esc(e.message), sid, pkg);
         }
       }).catch(function () {
-        slot.innerHTML = '<div class="pv-empty">3D 组件加载失败（网络受限？）</div>';
+        fail(slot, "3D 组件加载失败（网络受限？）", sid, pkg);
       });
     }).catch(function (e) {
-      slot.innerHTML = '<div class="pv-empty">预览获取失败：' + esc(e.message) + "</div>";
+      fail(slot, "预览获取失败：" + esc(e && e.message), sid, pkg);
     });
   }
 
-  window.RTPreview = { mount: mount };
+  // 历史回放用：滚到附近才真正挂载，避免一进页面就建一堆 WebGL 上下文
+  function mountLazy(slot, sid, pkg) {
+    slot.innerHTML = '<div class="pv-lazy">滚动到这里加载三维预览…</div>';
+    if (!window.IntersectionObserver) { mount(slot, sid, pkg); return; }
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) {
+        if (e.isIntersecting) { io.disconnect(); mount(slot, sid, pkg); }
+      });
+    }, { rootMargin: "300px" });
+    io.observe(slot);
+  }
+
+  window.RTPreview = { mount: mount, mountLazy: mountLazy };
 })();

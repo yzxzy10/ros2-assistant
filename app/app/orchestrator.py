@@ -1182,17 +1182,31 @@ def handle(cfg, sid, message, user_id=None, images=None):
             res["agents"] = agents.trace()
             res["agent_chain"] = agents.handoff_line()
         if isinstance(res, dict) and res.get("reply"):
-            _record_transcript(sess, res.get("reply"), "assistant")
+            # 记下这条回复生成了哪个模型，回放时才能把三维预览重新挂上
+            extra = None
+            sim = res.get("sim")
+            if isinstance(sim, dict) and sim.get("package"):
+                extra = {"sim": {"package": sim["package"],
+                                 "archetype": sim.get("archetype", "")}}
+            elif res.get("model_preview"):
+                extra = {"sim": {"package": "", "archetype": ""}}
+            _record_transcript(sess, res.get("reply"), "assistant", extra=extra)
         return res
 
 
-def _record_transcript(sess, content, role):
-    """把一句话追加进回放消息流（transcript），并控制长度。"""
+def _record_transcript(sess, content, role, extra=None):
+    """把一句话追加进回放消息流（transcript），并控制长度。
+
+    extra 用来存「这条回复带什么模型」之类的元信息，回放时前端据此重挂三维预览。
+    """
     text = (content or "").strip()
     if not text:
         return
     try:
-        sess.transcript.append({"role": role, "content": text})
+        item = {"role": role, "content": text}
+        if isinstance(extra, dict):
+            item.update(extra)
+        sess.transcript.append(item)
         if len(sess.transcript) > 200:
             sess.transcript = sess.transcript[-200:]
         sess.save()
@@ -1384,3 +1398,30 @@ def _handle_locked(cfg, sess, message, images=None):
     # 4. 直接回答
     kind = _classify_direct(msg)
     return _direct_answer(cfg, sess, msg, kind, [agents.name_of("answerer")])
+
+_GEN_PKG = re.compile(r"已生成\s*`([A-Za-z0-9_]{1,64})`")
+
+
+def transcript_for_replay(sess):
+    """回放用的消息流：给老会话补上「这条回复生成了哪个模型」。
+
+    早期版本没把模型信息写进 transcript，回放时三维预览就丢了。
+    这里从正文里认出包名，并确认工作区里确实有这个包，才补上 —— 不猜。
+    """
+    out = []
+    for item in (sess.transcript or []):
+        if not isinstance(item, dict):
+            continue
+        it = dict(item)
+        if it.get("role") == "assistant" and not it.get("sim"):
+            m = _GEN_PKG.search(it.get("content") or "")
+            if m:
+                pkg = m.group(1)
+                pkg_dir = os.path.join(sess.ws_root(), "src", pkg)
+                if os.path.isdir(pkg_dir):
+                    urdf = os.path.join(pkg_dir, "urdf")
+                    if os.path.isdir(urdf):
+                        it["sim"] = {"package": pkg, "archetype": "",
+                                     "inferred": True}
+        out.append(it)
+    return out

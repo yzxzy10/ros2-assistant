@@ -1189,8 +1189,18 @@
           renderWelcome();
         } else {
           hist.forEach(function (h) {
-            if (h.role === "user") addMsg("user", md(h.content || ""));
-            else addMsg("assistant", md(h.content || ""));
+            if (h.role === "user") {
+              addMsg("user", md(h.content || ""));
+            } else {
+              var bub = addMsg("assistant", md(h.content || ""));
+              // 回放时把模型预览也挂回来：滚到附近才真正加载，避免一次建太多 WebGL 上下文
+              if (h.sim && window.RTPreview && window.RTPreview.mountLazy) {
+                var slot = document.createElement("div");
+                slot.className = "pv-slot";
+                bub.appendChild(slot);
+                window.RTPreview.mountLazy(slot, sid, h.sim.package || "");
+              }
+            }
           });
         }
         // 恢复待办选项：固定选项（规划完成后的 A/B/C/D、C/D）切回后仍可点

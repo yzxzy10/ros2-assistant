@@ -998,10 +998,16 @@ body.gp-resizing #gp-svg { pointer-events: none; }
 .pv-joint input[type="range"] { flex: 1; accent-color: var(--accent); }
 .pv-jval { font-size: 11px; color: var(--muted); min-width: 52px; text-align: right; }
 .pv-warn { font-size: 11px; color: var(--warn); line-height: 1.5; }
-.pv-loading, .pv-empty {
+.pv-loading, .pv-empty, .pv-lazy {
   font-size: 12px; color: var(--muted); padding: 14px 12px;
   border: 1px dashed var(--border-strong); border-radius: 12px; text-align: center;
 }
+.pv-retry {
+  margin-left: 6px; padding: 2px 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border-strong); background: var(--card, #fff);
+  color: var(--accent-3, #6d28d9); font-size: 12px;
+}
+.pv-retry:hover { background: var(--accent-weak, #f3efff); }
 [data-theme="dark"] .pv-wrap { background: #131a24; }
 [data-theme="dark"] .pv-canvas { background: #0d131b; }
 .pv-joint { padding: 2px 6px; margin: 0 -6px; border-radius: 8px; }

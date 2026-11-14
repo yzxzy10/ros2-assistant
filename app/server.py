@@ -327,7 +327,7 @@ class Handler(BaseHTTPRequestHandler):
                     "level": sess.level,
                     "userId": sess.user_id,
                     "history": sess.history,
-                    "transcript": sess.transcript,
+                    "transcript": orchestrator.transcript_for_replay(sess),
                 })
             elif path == "/api/graph":
                 sid = self._query().get("sid", "")
