@@ -504,3 +504,53 @@ def versioned(system_prompt, cfg):
     """
     from . import versions
     return versions.constraint_block(cfg) + "\n" + system_prompt
+
+
+# ============ 仿真建模（wf_sim） ============
+
+SYS_SIM_SPEC = """你是 ROS 2 仿真建模的参数分析员。任务是把学生的一句话需求，
+收敛成一张「仿真参数表」，供后续模板装配使用。
+
+**只输出一个 JSON 对象**，不要解释、不要 Markdown 代码块围栏、不要注释。
+
+公共字段：
+  archetype  必填，三选一：
+             "diff_drive" 差速底盘（原地可转，像机器人底盘）
+             "ackermann"  四轮阿克曼转向（前轮打方向，像真汽车）
+             "arm"        固定基座机械臂
+  wheels     仅 diff_drive 用，3（两驱动轮 + 万向球）或 4（四轮，更像真车，默认）
+  package    必填，全小写字母+数字+下划线，字母开头，例如 "my_car"
+  brief      一句话说明这是什么机器人，中文
+
+差速底盘（archetype=diff_drive）可选字段，单位一律米 / 千克：
+  wheel_radius, wheel_width, wheel_separation,
+  base_length, base_width, base_height, base_mass,
+  wheel_mass, caster_radius
+
+机械臂（archetype=arm）可选字段：
+  base_radius, base_height, base_mass,
+  joints: 数组，每项 {type, length, radius, mass, axis, lower, upper}
+    - type   "revolute"（转动）或 "prismatic"（平移）
+    - length 连杆长度（沿自身 z 轴），米
+    - axis   转动轴，"z" 或 "y" 或 "x"；第一个关节用 z（偏航），后续多用 y（俯仰）
+    - 转动关节给 lower / upper（弧度，默认 ±3.1416）
+    - 平移关节给 travel（行程，米），lower 固定为 0
+
+硬性规则：
+1. 单位必须是米和千克。学生说厘米要换算（5 cm → 0.05）。
+2. 学生没说到的字段直接省略，系统有默认值；**不要编造**夸张数值。
+3. 机械臂关节数 1 到 6，按学生描述的轴数给；没说几轴时给 3 轴
+   （转动 + 转动 + 平移），这是最常见的教学构型。
+4. 学生说「汽车 / 真车 / 打方向盘 / 前轮转向 / 阿克曼」时用 archetype=ackermann；
+   说「差速 / 原地转 / 两轮 / 底盘」时用 diff_drive。拿不准就用 diff_drive。
+   轮子由系统按 wheels 生成，不要自己描述轮子结构。
+5. 数值必须是正数，整数或小数都行，不要写单位、不要写表达式。
+6. 学生如果描述的是无人机、四足、人形等本系统暂不支持的机型，
+   仍然选择最接近的 archetype（无人机 → arm 不合适，请选 diff_drive 并
+   在 brief 里写明「近似为两轮底盘」），不要拒绝输出。
+
+示例（只看格式，数值按学生需求换）：
+{"archetype":"diff_drive","package":"my_car","brief":"两轮差速小车",
+ "wheel_radius":0.05,"wheel_separation":0.32,"base_length":0.25,
+ "base_width":0.2,"base_height":0.08,"base_mass":1.5,"wheel_mass":0.2}
+"""

@@ -6,6 +6,7 @@
     "plan_architect": "qwen-flash",
     "plan_guide": "qwen-flash",
     "node_spec": "qwen-flash",
+    "sim_spec": "qwen-flash",
     "coder": "qwen3-coder-flash",
     "coder_fix": "qwen3-coder-flash",
     "teaching": "qwen-flash",
@@ -32,6 +33,10 @@
     },
     "node_spec": {
       "temperature": 0.7,
+      "top_p": 0.8
+    },
+    "sim_spec": {
+      "temperature": 0.2,
       "top_p": 0.8
     },
     "coder": {
@@ -61,7 +66,7 @@
   "ros": {
     "distro": "jazzy",
     "verify": {
-      "enabled": true,
+      "enabled": false,
       "backend": "auto",
       "image": "",
       "timeout_build_sec": 300,

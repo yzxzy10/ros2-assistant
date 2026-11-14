@@ -27,7 +27,8 @@ from .prompts import (MASTER_PERSONA, SYS_MASTER_ERROR, SYS_MASTER_CONCEPT,
                       SYS_MASTER_EXERCISE, SYS_MASTER_CHAT, SYS_MASTER_FAQ,
                       DIRECT_GUARD, SYS_SUMMARY, VISION_FALLBACK_NOTE,
                       versioned)
-from . import wf_need, wf_plan, wf_code
+from . import wf_need, wf_plan, wf_code, wf_sim
+from . import model_inspect
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -167,6 +168,49 @@ def _is_project_intent(msg):
         return False
     return bool(re.search(r"做|搞|搭|建|实现|开发|设计|写|规划|要一个|来一个|想要|帮我", msg))
 
+# ---------- 仿真建模意图 ----------
+# 与项目流水线的分界：说「模型 / URDF / Gazebo」是要描述文件；
+# 说「避障 / 导航 / 话题 / 节点」是要功能节点，仍走项目流水线。
+RE_SIM_MODEL = re.compile(
+    r"urdf|xacro|\bsdf\b|robot[\s_]*model|模型|gazebo|gz\s*sim|仿真环境", re.I)
+RE_SIM_ROBOT = re.compile(
+    r"机械臂|机械手|差速|底盘|小车|四旋翼|无人机|机器人|"
+    r"汽车|车辆|四轮|两轮|三轮|转向车|遥控车|阿克曼")
+RE_SIM_FUNC = re.compile(
+    r"避障|导航|建图|slam|雷达|相机|识别|检测|订阅|发布|话题|节点|服务端|"
+    r"多节点|tf|参数服务器|状态机", re.I)
+RE_SIM_VERB = re.compile(r"做|生成|搭|建|造|给|要|写|设计|来一个|帮我|画")
+RE_SIM_ASK = re.compile(
+    r"报错|错误|Error|error|Exception|Traceback|为什么|怎么|如何|什么是|是什么|"
+    r"区别|讲解|解释|吗|呢|？|\?")
+
+
+def _is_sim_intent(msg):
+    """是否要走「仿真建模」：生成 URDF / 骨架 / launch，而不是功能节点。
+
+    宁可漏判也不要误判——误判会把「做一个避障小车项目」的路由从项目流水线
+    抢过来，学生拿不到本该有的节点规划。所以这里要求「模型词 + 动词」，
+    或者「机器人词 + 动词 + 没有任何功能词」。
+    """
+    text = (msg or "").strip()
+    if len(text) < 4:
+        return False
+    if RE_SIM_ASK.search(text):
+        return False
+    has_model = bool(RE_SIM_MODEL.search(text))
+    has_robot = bool(RE_SIM_ROBOT.search(text))
+    has_verb = bool(RE_SIM_VERB.search(text))
+    has_func = bool(RE_SIM_FUNC.search(text))
+
+    if has_model and has_verb:
+        return True
+    if has_robot and has_verb and not has_func:
+        # 「做一个差速小车项目」这种带「项目」的，交回项目流水线
+        if re.search(r"项目|系统|套件", text):
+            return False
+        return True
+    return False
+
 FALLBACK_MARK = "⚠️ 工作流暂时不可用，以下内容由我直接撰写，未经过规范检查流程。"
 UNPASSED_MARK = "⚠️ 该代码未完全通过规范检查：{summary}。运行时可能需手动调整。"
 
@@ -236,6 +280,24 @@ class Session(object):
         with open(path, "w", encoding="utf-8") as f:
             f.write(body)
         return path
+
+    def save_files(self, files, pkg):
+        """把一批「相对路径 → 内容」写进 src/<pkg>/，支持任意子目录。
+
+        与 save_node_file 的区别：那个只写单节点 .py，这里要一次落一整包
+        （urdf/、launch/、config/、worlds/、scripts/）。
+        统一 LF 换行——这些文件要拿去 Ubuntu 上 colcon build，CRLF 会让
+        脚本首行的 shebang 失效。
+        """
+        root = os.path.join(self.ws_root(), "src", pkg)
+        for rel, text in files.items():
+            path = os.path.join(root, rel.replace("/", os.sep))
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+        return root
 
     def file_tree(self):
         root = self.ws_root()
@@ -688,11 +750,139 @@ def _pipeline_step2(cfg, sess, full_desc, stages=None):
     sess.pending = "options"
     sess.need_data = sess.need_data or {"original_request": full_desc}
     sess.save()
-    return _reply("\n".join(md), options=OPT_ABCD, options_mode="abcd",
+    opts = list(OPT_ABCD)
+    if _wants_model(full_desc):
+        opts.append({"key": "E", "label": "顺便生成一个 Gazebo 仿真模型"})
+    return _reply("\n".join(md), options=opts,
+                  options_mode="abcde" if len(opts) > 4 else "abcd",
                   stages=stages, sess=sess)
 
 
 # ============ 直接回答 ============
+
+def _has_model(sess):
+    ip = getattr(sess, "imported_project", None) or {}
+    return bool(ip.get("models"))
+
+
+RE_WANT_MODEL = re.compile(
+    r"小车|底盘|机械臂|机械手|机器人|四旋翼|无人机|仿真|gazebo|模型|urdf|xacro", re.I)
+
+
+def _wants_model(text):
+    """这个项目需求是否值得给一个「顺便生成仿真模型」的按钮。
+
+    只做「有没有提到实体机器人」的判断，不看要不要仿真 —— 学生说的是
+    避障小车，模型对他就一定有用；说「只写个发布者」就没必要打扰他。
+    """
+    return bool(RE_WANT_MODEL.search(text or ""))
+
+
+MODEL_CHECK_RE = re.compile(
+    r"检查.{0,8}模型|模型.{0,6}(体检|检查|有没有|是否有|有什么)|体检|"
+    r"我的模型|这个模型.{0,4}(对|错|问题|能用)|检查一下.{0,6}(urdf|xacro|模型)", re.I)
+
+
+def _model_check(cfg, sess):
+    """上传模型体检：结构 → 自动修 → 给出「是否补控制器」的选项。
+
+    修复就地进行（缺失型问题补上不会改变作者意图），改完的文件会出现在
+    右侧文件树里，学生能直接看见改了什么。
+    """
+    with progress.step("sim_check", "模型体检", "解析 URDF / xacro 结构"):
+        diag, fixed, blocked = model_inspect.prepare(sess)
+        if diag["models"]:
+            progress.note("%d 个模型文件 · 控制层 %s · 修了 %d 处"
+                          % (len(diag["models"]), diag["control"]["state"], len(fixed)))
+        else:
+            progress.note("没找到模型文件")
+
+    if not diag["models"]:
+        sess.pending = None
+        sess.save()
+        return _reply(
+            "会话里没有模型文件。点左下角的导入按钮，把模型包（zip 或者整包文件夹）"
+            "传进来，我再帮你看。支持 `.urdf` / `.xacro` / `.sdf`。",
+            stages=["模型体检"], sess=sess)
+
+    md = model_inspect.render_report(diag, fixed, blocked)
+
+    if diag["actionable"]:
+        sess.pending = "model_fix"
+        sess.save()
+        md += ("\n\n要我现在按这几个关节生成控制器吗？"
+               "会补 `ros2_control` 声明、`gz_ros2_control` 插件、`controllers.yaml` "
+               "和一个能直接 launch 的启动文件。")
+        r = _reply(md, options=[
+            {"key": "1", "label": "生成配套控制器"},
+            {"key": "2", "label": "先不用，我自己接"},
+        ], options_mode="model", stages=["模型体检"], sess=sess)
+        r["model_preview"] = True
+        return r
+
+    sess.pending = None
+    sess.save()
+    return _reply(md, stages=["模型体检"], sess=sess)
+
+
+def _model_control(cfg, sess):
+    """按已有模型补控制器并落盘。"""
+    with progress.step("sim_ctrl", "生成控制器", "ros2_control + gz 插件 + yaml"):
+        diag = model_inspect.diagnose(sess)
+        res = model_inspect.build_control(sess, diag)
+        written = model_inspect.apply_control(res)
+        if res.get("ok"):
+            progress.note("%d 个关节 · 写入 %d 个文件" % (len(res["joints"]), len(written)))
+
+    sess.pending = None
+    sess.save()
+    # 补完再体检一次，报告里的「控制层」状态才是补完后的真实状态
+    diag_after = model_inspect.diagnose(sess) if res.get("ok") else diag
+    md = model_inspect.render_report(diag_after, None, None, res, compact=True)
+    if res.get("ok"):
+        md += ("\n\n启动后可以用下面这条确认控制器真的挂上了：\n\n"
+               "```bash\nros2 control list_controllers\n```")
+    r = _reply(md, options=[
+        {"key": "1", "label": "下载整包 zip", "action": "zip"},
+    ], options_mode="model", stages=["模型体检"], sess=sess)
+    r["model_preview"] = True
+    return r
+
+
+def _sim_flow(cfg, sess, msg):
+    """仿真建模直通车：一句话需求 → 一整包可编译工程。
+
+    与项目流水线的差别：这里不规划节点、不问三轮问题，直接把
+    「描述 + 接线 + 配置」装出来，因为学生此刻要的是模型，不是业务逻辑。
+    """
+    sess.pending = None
+    try:
+        res = wf_sim.run(cfg, msg)
+    except Exception as e:
+        return _reply(
+            "仿真建模这一步没跑通：`%s`\n\n"
+            "把需求再说细一点可以重试，例如「生成一个两轮差速小车，轮径 5 厘米、轮距 32 厘米」。"
+            % e, stages=["仿真建模"], sess=sess)
+
+    pkg = res["spec"]["package"]
+    # 项目里「顺便生成模型」时不能覆盖项目包名，否则后续生成节点会写进仿真包
+    if not sess.node_list:
+        sess.package_name = pkg
+    sess.save_files(res["files"], pkg)
+    _remember_message(sess, msg)
+
+    md = wf_sim.render_markdown(res)
+    r = _reply(md, options=[{"key": "1", "label": "下载整包 zip", "action": "zip"}],
+               options_mode="model", stages=["仿真建模"], sess=sess)
+    r["sim"] = {
+        "package": pkg,
+        "archetype": res["spec"]["archetype"],
+        "archetype_name": res["spec"]["archetype_name"],
+        "files": len(res["files"]),
+        "gate_passed": bool(res["gate"]["passed"]),
+    }
+    return r
+
 
 def _direct_answer(cfg, sess, msg, kind, stages):
     agents.mark("answerer", "学生问题 + 检索依据")
@@ -833,7 +1023,9 @@ def _is_option_reply(msg):
     if not t:
         return False
     upper = t.upper()[:1]
-    if upper in ("A", "B", "C", "D") and len(t) <= 2:
+    if upper in ("A", "B", "C", "D", "E") and len(t) <= 2:
+        return True
+    if re.search(r"生成.{0,6}(仿真)?模型|要模型|加.{0,4}模型|仿真模型", t):
         return True
     # 明确动作词（这些词即使出现在长句里也基本指向选项动作，相对安全）
     if re.search(r"修改|改一下|要改|调整|生成.{0,20}代码|节点.{0,10}代码|"
@@ -912,6 +1104,12 @@ def _handle_options(cfg, sess, msg, stages):
         return _gen_single_node(cfg, sess, _spec_json(node), node["node_name"], expected_name=node.get("node_name"))
     if upper == "D" or re.search(r"全部生成|所有.{0,6}生成|全都生成", t):
         return _gen_batch(cfg, sess, stages)
+    if upper == "E" or re.search(r"生成.{0,6}(仿真)?模型|要模型|仿真模型", t):
+        sess.pending = None
+        sess.save()
+        brief = (sess.requirement_desc or "") + \
+            "\n（只要 Gazebo 仿真模型与配套接线，不需要业务节点代码）"
+        return _sim_flow(cfg, sess, brief)
     # 不认识的回复 → 重新给选项
     return _reply("请回复选项字母（A/B/C/D），或直接说你的想法～",
                   options=OPT_ABCD, options_mode="abcd", stages=stages, sess=sess)
@@ -950,8 +1148,9 @@ def _gen_batch(cfg, sess, stages=None):
     sess.save()
     return _mark_graph_ready(
         _reply("\n\n---\n\n".join(parts) +
-               "\n\n全部节点生成完毕🎉 可到右侧「项目文件」下载整个工作区。",
-               stages=stages, sess=sess), sess)
+               "\n\n全部节点生成完毕🎉 点下面的按钮把整个工作区打包带走。",
+               options=[{"key": "1", "label": "下载整包 zip", "action": "zip"}],
+               options_mode="model", stages=stages, sess=sess), sess)
 
 
 def _expand_choice(sess, msg):
@@ -1135,13 +1334,38 @@ def _handle_locked(cfg, sess, message, images=None):
         sess.pending = None
         # 不是"继续"就当普通消息处理
 
+    if sess.pending == "model_fix":
+        if re.search(r"^2|不用|先不|自己接|算了|不了", msg):
+            sess.pending = None
+            sess.save()
+            return _reply("好，控制器先不动。右侧文件树里能看到我改过的模型；"
+                          "什么时候要接，跟我说「给模型生成控制器」就行。",
+                          sess=sess)
+        if re.search(r"^1|生成.{0,6}控制|配上|补上|接上", msg):
+            return _model_control(cfg, sess)
+        sess.pending = None
+        sess.save()
+
+    # 上传模型体检：只有明确说「检查模型 / 模型有没有问题」才走，
+    # 否则「检查一下这个话题」也会被拉进来。
+    if _has_model(sess) and MODEL_CHECK_RE.search(msg):
+        return _model_check(cfg, sess)
+
     # 2. 项目意图（带图时只看学生自己打的字，别被图里抄来的文字带跑）
     route_text = orig_text if (img_paths and orig_text) else msg
     with progress.step("route", "意图识别"):
-        is_project = _is_project_intent(route_text) and len(route_text) >= 4
+        is_sim = _is_sim_intent(route_text)
+        is_project = (_is_project_intent(route_text) and len(route_text) >= 4
+                      and not is_sim)
         progress.note("判定为%s · 讲解深度 %s" % (
-            "项目需求" if is_project else "单点提问",
+            "仿真建模" if is_sim else ("项目需求" if is_project else "单点提问"),
             "进阶" if sess.level == "advanced" else "入门"))
+    if is_sim:
+        sess.requirement_desc = msg
+        sess.ask_count = 0
+        sess.last_ask_question = ""
+        sess.ask_options = []
+        return _sim_flow(cfg, sess, msg)
     if is_project:
         sess.requirement_desc = msg
         sess.ask_count = 0

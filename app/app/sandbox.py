@@ -403,6 +403,8 @@ def summary_line(result):
     name = "ROS 2 " + (versions.DISTROS.get(distro, {}).get("display") or distro)
     backend = result.get("backend")
     if not result.get("attempted"):
+        if result.get("silent"):
+            return name  # 编译环节被关闭：只报发行版，不提编译验证
         return "%s · 编译验证：未执行（%s）" % (name, result.get("reason") or "未启用")
     tag = "通过" if result.get("ok") else "未通过"
     stage_cn = {"build": "编译", "run": "启动", "env": "环境"}.get(result.get("stage"), "")

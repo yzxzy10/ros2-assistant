@@ -27,7 +27,7 @@ from app.config import load_config, api_configured, key_hint, CONFIG_PATH
 from app.kb import get_retriever
 from app import (orchestrator, store, archive, auth, env, paths,
                  identity, ratelimit, vision, versions, sandbox,
-                 project_import, graph_api, agents)
+                 project_import, graph_api, agents, model_inspect, model_scene)
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 PUBLIC = os.path.join(_ROOT, "public")
@@ -376,6 +376,21 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
+            elif path.startswith("/api/model/"):
+                # 模型 3D 预览：服务端解析成关节树，前端只负责摆位置
+                sid = path[len("/api/model/"):]
+                if not _SAFE_SID.match(sid):
+                    return self._json({"error": "bad session id"}, 400)
+                sess = orchestrator.get_session(sid)
+                self._claim(sess, bound)
+                if not self._may_access(bound, sess.user_id):
+                    return self._json({"error": "forbidden", "message": "无权访问该会话"}, 403)
+                from urllib.parse import urlparse, parse_qs
+                q = parse_qs(urlparse(self.path).query)
+                pkg = (q.get("pkg") or [""])[0].strip()
+                if pkg and not re.fullmatch(r"[A-Za-z0-9_]{1,64}", pkg):
+                    pkg = ""
+                self._json(model_scene.build_scene(sess, pkg=pkg or None))
             elif path.startswith("/api/files/"):
                 sid = path[len("/api/files/"):]
                 if not _SAFE_SID.match(sid):
@@ -564,13 +579,33 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": False, "message": message,
                                "recognized": project_import.to_json(
                                    getattr(sess, "imported_project", None))}, 400)
-        return self._json({
+        payload = {
             "ok": True,
             "message": message,
             "imported_project": project_import.to_json(sess.imported_project),
             "files": sess.file_tree(),
             "nodes": [],
-        })
+        }
+        # 导入即体检：模型文件结构 + 控制层是否齐备。
+        # 修复是就地进行的，学生能在文件树里直接看到改了哪几处。
+        try:
+            diag, fixed, blocked = model_inspect.prepare(sess)
+            if diag.get("models"):
+                payload["inspect"] = {
+                    "markdown": model_inspect.render_report(diag, fixed, blocked),
+                    "actionable": bool(diag.get("actionable")),
+                    "state": diag["control"]["state"],
+                    "options": ([{"key": "1", "label": "生成配套控制器"},
+                                 {"key": "2", "label": "先不用，我自己接"}]
+                                if diag.get("actionable") else []),
+                }
+                if diag.get("actionable"):
+                    sess.pending = "model_fix"
+                    sess.save()
+                payload["files"] = sess.file_tree()
+        except Exception as e:
+            payload["inspect"] = {"error": "体检失败：%s" % e}
+        return self._json(payload)
 
     def _project_remove(self, bound):
         """移除当前会话里的项目（清空工作区），聊天记录保留。"""

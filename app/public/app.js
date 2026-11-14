@@ -220,8 +220,16 @@
     (options || []).forEach(function (o) {
       var b = document.createElement("button");
       b.className = "opt-btn";
-      b.textContent = o.key + ". " + o.label;
-      b.onclick = function () { doSend(o.send || o.key); };
+      // action 型按钮不走对话：点了直接下压缩包，省一次往返
+      if (o.action === "zip") { b.classList.add("opt-action"); }
+      b.textContent = (o.key ? o.key + ". " : "") + o.label;
+      b.onclick = function () {
+        if (o.action === "zip") {
+          if (window.RTDownloadWorkspace) window.RTDownloadWorkspace();
+          return;
+        }
+        doSend(o.send || o.key);
+      };
       optBar.appendChild(b);
     });
   }
@@ -571,6 +579,13 @@
         ctx.body.appendChild(bar);
       }
       renderOptions(ev.options, ev.options_mode);
+      // 模型相关的结果后面挂一块 3D 预览：不用开虚拟机就能先看形状
+      if ((ev.sim || ev.model_preview) && window.RTPreview) {
+        var pvSlot = document.createElement("div");
+        pvSlot.className = "pv-slot";
+        ctx.body.appendChild(pvSlot);
+        window.RTPreview.mount(pvSlot, sid, (ev.sim && ev.sim.package) || "");
+      }
       // 代码刚生成完：问一句要不要进架构图手动改（开关关掉就不问）
       if (ev.graph_ready) {
         if (window.RTPulseGraphEntry) window.RTPulseGraphEntry();
@@ -720,6 +735,15 @@
     }).then(function (d) {
       if (!d.ok) throw new Error(d.message || "导入失败");
       addMsg("assistant", md("✅ " + (d.message || "项目导入成功")));
+      // 导入即体检：模型结构 + 控制层，修复结果已经在服务端落盘
+      if (d.inspect && d.inspect.markdown) {
+        addMsg("assistant", md(d.inspect.markdown));
+        if (d.inspect.options && d.inspect.options.length) {
+          renderOptions(d.inspect.options, "model");
+        }
+      } else if (d.inspect && d.inspect.error) {
+        addMsg("assistant", md("⚠️ " + d.inspect.error));
+      }
       refreshSession();
       refreshProfile();
       if (window.RTGraph) window.RTGraph.reload();   // 导入完立刻出图
@@ -969,6 +993,8 @@
     window.location.href = u;
   }
   window.RTDownloadWorkspace = downloadWorkspace;
+  // 预览模块在另一个文件里，需要拿到当前令牌
+  window.RTToken = function () { return token || ""; };
   $("download-zip").onclick = downloadWorkspace;
   if ($("open-graph")) $("open-graph").onclick = function () { openGraphPane(); };
   window.RTPulseGraphEntry = function () {
@@ -1019,14 +1045,17 @@
       return;
     }
     var sb = v.sandbox || {};
+    // 编译验证被显式关闭时，徽标里不再出现「编译验证」字样，避免答辩投影上的歧义
     var back = sb.available
       ? "编译验证：可用（" + (sb.backend || "?") + "）"
-      : "编译验证：未启用（" + (sb.reason || "环境不支持") + "）";
+      : (String(sb.reason || "").indexOf("关闭") >= 0
+          ? ""
+          : "编译验证：未启用（" + (sb.reason || "环境不支持") + "）");
     box.innerHTML =
       '<div class="ver-row"><b>' + (v.ros.short || "") + '</b>' +
       '<span class="ver-dim">Ubuntu ' + (v.ros.ubuntu || "") +
       ' · Python ' + (v.ros.python || "") + '</span></div>' +
-      '<div class="ver-row ver-dim">' + back + '</div>' +
+      (back ? '<div class="ver-row ver-dim">' + back + '</div>' : '') +
       '<div class="ver-row ver-dim">系统版本 v' + (v.app_version || "?") + '</div>';
   }
 
@@ -1139,7 +1168,7 @@
     addMsg("assistant", md(
       "你好呀！我是你的 ROS2 学习助手 🤖\n\n" +
       "我可以帮你：\n" +
-      "- **做项目**：从需求分析 → 节点规划 → 逐节点生成代码 → 编译验证（ROS 2 Jazzy / Python）\n" +
+      "- **做项目**：从需求分析 → 节点规划 → 逐节点生成代码（ROS 2 Jazzy / Python）\n" +
       "- **写节点**：「帮我写一个发布者节点」\n" +
       "- **排报错**：把报错信息贴给我\n" +
       "- **讲概念 / 出练习题**：随时问我\n\n" +
@@ -1206,7 +1235,7 @@
     wrap.innerHTML =
       '<div class="qc-title">开始你的 ROS2 学习</div>' +
       '<div class="qc-grid">' +
-        '<button class="qc-card" data-send="我想做一个避障小车项目"><b>做一个项目</b><span>从需求分析到节点代码、编译验证</span></button>' +
+        '<button class="qc-card" data-send="我想做一个避障小车项目"><b>做一个项目</b><span>从需求分析到节点代码、架构图</span></button>' +
         '<button class="qc-card" data-send="帮我写一个订阅激光雷达的节点"><b>写一个节点</b><span>描述功能，直接生成单个节点</span></button>' +
         '<button class="qc-card" data-send="什么是话题（topic）？"><b>讲一个概念</b><span>话题、服务、QoS 等随时问</span></button>' +
       '</div>';

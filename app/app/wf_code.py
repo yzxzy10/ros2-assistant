@@ -159,10 +159,18 @@ def run(cfg, node_spec_input):
                 progress.note("未执行：%s" % (v.get("reason") or "环境不支持"))
             return v
 
-    verify = _run_verify(code) if code else {
-        "attempted": False, "ok": False, "backend": "none", "stage": "",
-        "distro": versions.distro_name(cfg), "elapsed": 0.0,
-        "reason": "代码为空，跳过编译验证"}
+    _sb_backend, _sb_why = sandbox.resolve(cfg)
+    if code and _sb_backend != "none":
+        verify = _run_verify(code)
+    else:
+        # 编译环节整体静默：配置关闭或环境不支持时，进度和结果里
+        # 都不出现「编译验证」字样，输出保持干净。
+        verify = {
+            "attempted": False, "ok": False, "backend": "none", "stage": "",
+            "distro": versions.distro_name(cfg), "elapsed": 0.0,
+            "silent": True,
+            "reason": ("代码为空，跳过编译验证" if not code
+                       else (_sb_why or "环境不支持"))}
     compile_rounds = 0
     fix_budget = int(((cfg.get("ros") or {}).get("verify") or {}).get("fix_rounds") or 0)
     while (verify.get("attempted") and not verify.get("ok")

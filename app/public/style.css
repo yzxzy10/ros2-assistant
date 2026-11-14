@@ -216,6 +216,11 @@ body {
   transition: border-color .1s, background .1s, transform .1s, box-shadow .1s;
 }
 .opt-btn:hover { background: var(--accent-weak); border-color: var(--accent); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+/* action 型按钮（如「下载整包 zip」）：点击即下载，不走对话，视觉上单独标一下 */
+.opt-btn.opt-action {
+  border-style: dashed; color: var(--accent); font-weight: 500;
+}
+.opt-btn.opt-action:hover { border-style: solid; }
 
 #composer {
   padding: 12px 8% 18px; display: flex; flex-direction: column; gap: 8px;
@@ -964,3 +969,43 @@ body.gp-resizing #gp-svg { pointer-events: none; }
 .im-item .ico { width: 16px; height: 16px; flex: none; margin-top: 2px; color: var(--accent); }
 .im-item b { display: block; font-size: 12.5px; font-weight: 600; line-height: 1.35; }
 .im-item i { display: block; font-size: 11px; font-style: normal; color: var(--muted); line-height: 1.4; margin-top: 1px; }
+
+/* ---------- 模型 3D 预览卡片 ---------- */
+.pv-slot { margin-top: 10px; }
+.pv-wrap {
+  border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  background: var(--panel); box-shadow: var(--shadow-sm);
+}
+.pv-head {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+}
+.pv-title { font-size: 13px; font-weight: 500; color: var(--text); }
+.pv-src {
+  font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, Consolas, monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%;
+}
+.pv-canvas { width: 100%; height: 320px; background: var(--bg); }
+.pv-canvas canvas { display: block; }
+.pv-body { padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 6px; }
+.pv-tip { font-size: 11px; color: var(--muted); }
+.pv-joint { display: flex; align-items: center; gap: 8px; }
+.pv-jname {
+  font-size: 12px; color: var(--text); min-width: 88px; max-width: 130px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+.pv-joint input[type="range"] { flex: 1; accent-color: var(--accent); }
+.pv-jval { font-size: 11px; color: var(--muted); min-width: 52px; text-align: right; }
+.pv-warn { font-size: 11px; color: var(--warn); line-height: 1.5; }
+.pv-loading, .pv-empty {
+  font-size: 12px; color: var(--muted); padding: 14px 12px;
+  border: 1px dashed var(--border-strong); border-radius: 12px; text-align: center;
+}
+[data-theme="dark"] .pv-wrap { background: #131a24; }
+[data-theme="dark"] .pv-canvas { background: #0d131b; }
+.pv-joint { padding: 2px 6px; margin: 0 -6px; border-radius: 8px; }
+.pv-jname:hover { color: var(--accent); }
+.pv-joint.pv-joint-active { background: var(--accent-weak); }
+.pv-joint.pv-joint-active .pv-jname { color: var(--accent-3); font-weight: 500; }
+[data-theme="dark"] .pv-joint.pv-joint-active { background: rgba(124, 58, 237, 0.18); }

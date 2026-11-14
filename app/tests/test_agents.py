@@ -16,7 +16,7 @@ def check(name, cond, extra=""):
 
 
 print("[1] 注册表")
-check("九个角色", len(agents.all_agents()) == 9, len(agents.all_agents()))
+check("十一个角色", len(agents.all_agents()) == 11, len(agents.all_agents()))
 ids = [a["id"] for a in agents.all_agents()]
 check("id 唯一", len(ids) == len(set(ids)))
 steps = [a["step"] for a in agents.all_agents()]
