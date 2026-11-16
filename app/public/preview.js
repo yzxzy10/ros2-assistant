@@ -59,9 +59,31 @@
     canvasBox.className = "pv-canvas";
     wrap.appendChild(canvasBox);
 
+    // 工具栏：把「只能拖滑块」升级成能直接演示
+    var tools = document.createElement("div");
+    tools.className = "pv-tools";
+    tools.innerHTML =
+      '<span class="pv-tools-tip">关节</span>' +
+      '<button type="button" data-act="home">零位</button>' +
+      '<button type="button" data-act="demo">演示姿态</button>' +
+      '<button type="button" data-act="axes">坐标轴</button>' +
+      '<button type="button" data-act="spin">自动旋转</button>';
+    wrap.appendChild(tools);
+
     var body = document.createElement("div");
     body.className = "pv-body";
     wrap.appendChild(body);
+
+    // 位置读数：拖动关节时实时显示末端（或选中部件）在 URDF 坐标系下的位姿
+    var readout = document.createElement("div");
+    readout.className = "pv-readout";
+    readout.innerHTML = '<div class="pv-ro-row"><span class="pv-ro-k">对象</span>' +
+      '<span class="pv-ro-v" data-ro="who">—</span></div>' +
+      '<div class="pv-ro-row"><span class="pv-ro-k">位置</span>' +
+      '<span class="pv-ro-v" data-ro="pos">—</span></div>' +
+      '<div class="pv-ro-row"><span class="pv-ro-k">姿态 rpy</span>' +
+      '<span class="pv-ro-v" data-ro="rpy">—</span></div>';
+    wrap.appendChild(readout);
 
     slot.appendChild(wrap);
 
@@ -80,9 +102,19 @@
     dir.position.set(1.2, 2.0, 1.6);
     scene.add(dir);
 
+    // 地面网格（three 坐标：y 朝上，所以地面在 y=0 平面）
+    var grid = new THREE.GridHelper(2, 20, 0xc3cad6, 0xe8ebf0);
+    grid.visible = false;
+    scene.add(grid);
+
     var root = new THREE.Group();
     root.rotation.x = -Math.PI / 2;   // URDF 是 z 朝上，three 是 y 朝上
     scene.add(root);
+
+    // URDF 坐标轴：挂在 root 里，跟着 -90° 旋转，显示的就是 x/y/z（z 朝上）
+    var axes = new THREE.AxesHelper(0.3);
+    axes.visible = false;
+    root.add(axes);
 
     var byName = {};
     (data.links || []).forEach(function (l) { byName[l.name] = l; });
@@ -190,6 +222,7 @@
 
     var sliderRows = {};
     function applyHighlight(linkName) {
+      selLink = linkName || "";
       var keep = linkName ? subtreeOf(linkName) : null;
       meshList.forEach(function (m) {
         var on = !keep || keep[m.userData.link];
@@ -270,7 +303,11 @@
     })();
 
     function updateCam() { placeCam(dist); }
-    function draw() { updateCam(); renderer.render(scene, camera); }
+    function draw() {
+      updateCam();
+      renderer.render(scene, camera);
+      if (roReady) updateReadout();      // 每次重绘同步刷新位置读数
+    }
     draw();
 
     // 拖拽旋转 / 滚轮缩放
@@ -398,6 +435,115 @@
       draw();
     }
     // 兜底：若插入后仍被外部改过取值，下一帧按数据源复位
+    // ---------- 位置读数：用世界矩阵做正运动学 ----------
+    var roReady = false;
+    var rootInv = new THREE.Matrix4();
+    var selLink = "";
+
+    // 末端：优先 tool0，否则沿关节链取最深的那片叶子
+    var endName = (function () {
+      if (linkNodes.tool0) return "tool0";
+      var best = data.root, bestD = -1, stack = [[data.root, 0]];
+      while (stack.length) {
+        var cur = stack.pop(), d = cur[1];
+        if (d > bestD) { bestD = d; best = cur[0]; }
+        (childMap[cur[0]] || []).forEach(function (n) { stack.push([n.link, d + 1]); });
+      }
+      return best;
+    })();
+
+    function nodePose(name) {
+      var n = linkNodes[name];
+      if (!n) return null;
+      root.updateMatrixWorld(true);
+      rootInv.copy(root.matrixWorld).invert();
+      var m = new THREE.Matrix4().multiplyMatrices(rootInv, n.matrixWorld);
+      var p = new THREE.Vector3().setFromMatrixPosition(m);
+      var q = new THREE.Quaternion().setFromRotationMatrix(m);
+      var e = new THREE.Euler().setFromQuaternion(q, "ZYX");   // URDF 的 rpy = 固定轴 XYZ
+      return { p: p, e: e };
+    }
+
+    function mm(v) { return (v * 1000).toFixed(1); }
+    function dg(v) { return (v * 180 / Math.PI).toFixed(1); }
+
+    function updateReadout() {
+      var tgt = selLink || endName;
+      var ps = nodePose(tgt);
+      var who = readout.querySelector('[data-ro="who"]');
+      var posEl = readout.querySelector('[data-ro="pos"]');
+      var rpyEl = readout.querySelector('[data-ro="rpy"]');
+      if (!ps) {
+        who.textContent = tgt || "—";
+        posEl.textContent = "—";
+        rpyEl.textContent = "—";
+        return;
+      }
+      who.textContent = tgt;
+      posEl.textContent = "x " + mm(ps.p.x) + "  y " + mm(ps.p.y) + "  z " + mm(ps.p.z) + " mm";
+      rpyEl.textContent = "r " + dg(ps.e.x) + "°  p " + dg(ps.e.y) + "°  y " + dg(ps.e.z) + "°";
+    }
+    roReady = true;
+
+    // ---------- 演示方式：零位 / 演示姿态 / 坐标轴 / 自动旋转 ----------
+    var spinning = false;
+    function setJointValues(vals) {
+      sliders.forEach(function (it, i) {
+        var v = vals[i];
+        if (v == null) return;
+        var lim = it.j.limit || [-3.1416, 3.1416];
+        v = Math.max(lim[0], Math.min(lim[1], v));
+        it.j.value = v;
+        it.input.value = v;
+        it.val.textContent = fmt(v, it.j.type);
+      });
+      applyPose();
+      draw();
+    }
+
+    function demoPose() {
+      // 机械臂给一个能看出各段连杆的姿态；车给一点转向。
+      // 按滑块数量填满：多出来的关节（比如夹爪两指）按类型给一个合理值，
+      // 否则会出现「只合了一根手指」这种半截状态。
+      if (linkNodes.tool0) {
+        var arm = [0.42, -0.55, 1.15, -0.35, 0.85, 0.25];
+        return sliders.map(function (it, i) {
+          if (i < arm.length) return arm[i];
+          return it.j.type === "prismatic" ? 0.015 : 0;   // 两指各合一半
+        });
+      }
+      return sliders.map(function (it) {
+        return it.j.name.indexOf("steer") >= 0 ? 0.35 : 0;
+      });
+    }
+
+    function spinStep() {
+      if (!spinning) return;
+      az += 0.008;
+      draw();
+      requestAnimationFrame(spinStep);
+    }
+
+    tools.addEventListener("click", function (ev) {
+      var b = ev.target.closest ? ev.target.closest("button") : null;
+      if (!b) return;
+      var act = b.getAttribute("data-act");
+      if (act === "home") {
+        setJointValues(sliders.map(function () { return 0; }));
+      } else if (act === "demo") {
+        setJointValues(demoPose());
+      } else if (act === "axes") {
+        axes.visible = !axes.visible;
+        grid.visible = axes.visible;
+        b.classList.toggle("on", axes.visible);
+        draw();
+      } else if (act === "spin") {
+        spinning = !spinning;
+        b.classList.toggle("on", spinning);
+        if (spinning) spinStep();
+      }
+    });
+
     if (window.requestAnimationFrame) requestAnimationFrame(resetSliders);
     setTimeout(resetSliders, 260);
 

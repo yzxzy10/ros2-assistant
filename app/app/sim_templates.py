@@ -784,6 +784,7 @@ def generate_launch_description():
             "/odom@nav_msgs/msg/Odometry]gz.msgs.Odometry",
             "/tf@tf2_msgs/msg/TFMessage]gz.msgs.Pose_V",
             "/joint_states@sensor_msgs/msg/JointState]gz.msgs.Model",
+            "/scan@sensor_msgs/msg/LaserScan]gz.msgs.LaserScan",
         ],
         output="screen",
     )
@@ -897,6 +898,13 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```bash
 ros2 topic pub --rate 10 /cmd_vel geometry_msgs/msg/Twist \\
   "{linear: {x: 0.2}, angular: {z: 0.0}}"
+```
+
+雷达数据在 `/scan`（360 线、10 Hz、0.12–3.5 m），第一次跑起来先确认它有数据：
+
+```bash
+ros2 topic hz /scan
+ros2 topic echo /scan --once --field ranges
 ```
 
 里程计在 `/odom`，可以这样确认车真的在动：

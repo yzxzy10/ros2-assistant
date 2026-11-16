@@ -21,6 +21,8 @@ import math
 import re
 import xml.etree.ElementTree as ET
 
+from . import sim_conventions
+
 _XACRO_NS = "{http://www.ros.org/wiki/xacro}"
 _MOVABLE = ("revolute", "prismatic", "continuous")
 _TOL = 1e-6
@@ -177,7 +179,21 @@ def check(spec, files):
     else:
         _check_diff_wiring(g, spec, root, joints, props)
 
+    _check_conventions(g, spec, files)
+
     return _result(g)
+
+
+def _check_conventions(g, spec, files):
+    """G7：按资料库真实包的规范检查（顺序/材质/传感器与桥接/ros2_control 接口）。"""
+    pkg = spec["package"]
+    urdf = files.get("urdf/%s.urdf.xacro" % pkg, "")
+    launch = files.get("launch/sim.launch.py", "")
+    problems, checks = sim_conventions.check(urdf, launch, pkg)
+    for _ in range(checks):
+        g.ok("G7")
+    for msg in problems:
+        g.err("G7", msg)
 
 
 def _result(g):

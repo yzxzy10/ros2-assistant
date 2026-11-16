@@ -360,6 +360,37 @@ def _lidar_xml(spec):
     <origin xyz="${lidar_x} 0 ${lidar_height}" rpy="0 0 0"/>
   </joint>
 
+  <!-- 传感器要写在 <gazebo reference> 里才算真存在：只挂 sensors 插件的话，
+       模型有个雷达的外形，但 /scan 永远没有数据。写法对标 andino_gz。 -->
+  <gazebo reference="lidar_link">
+    <sensor name="lidar" type="gpu_lidar">
+      <gz_frame_id>lidar_link</gz_frame_id>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159265</min_angle>
+            <max_angle>3.14159265</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <min>0.12</min>
+          <max>3.50</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </ray>
+      <always_on>true</always_on>
+      <visualize>true</visualize>
+      <update_rate>10.0</update_rate>
+    </sensor>
+  </gazebo>
+
 '''
 
 

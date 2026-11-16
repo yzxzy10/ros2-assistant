@@ -1007,6 +1007,28 @@ body.gp-resizing #gp-svg { pointer-events: none; }
   border: 1px solid var(--border-strong); background: var(--card, #fff);
   color: var(--accent-3, #6d28d9); font-size: 12px;
 }
+.pv-tools {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 8px 12px 0;
+}
+.pv-tools-tip { font-size: 11px; color: var(--muted); margin-right: 2px; }
+.pv-tools button {
+  padding: 3px 10px; border-radius: 999px; cursor: pointer; font-size: 12px;
+  border: 1px solid var(--border-strong); background: var(--card, #fff);
+  color: var(--text); transition: background .15s, color .15s, border-color .15s;
+}
+.pv-tools button:hover { background: var(--accent-weak, #f3efff); }
+.pv-tools button.on {
+  background: var(--accent-3, #6d28d9); color: #fff; border-color: var(--accent-3, #6d28d9);
+}
+.pv-readout {
+  margin: 8px 12px 12px; padding: 8px 10px; border-radius: 10px;
+  background: var(--card-soft, #f7f8fa); border: 1px solid var(--border);
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+}
+.pv-ro-row { display: flex; gap: 10px; line-height: 1.9; }
+.pv-ro-k { color: var(--muted); min-width: 64px; }
+.pv-ro-v { color: var(--text); letter-spacing: .2px; }
 .pv-retry:hover { background: var(--accent-weak, #f3efff); }
 [data-theme="dark"] .pv-wrap { background: #131a24; }
 [data-theme="dark"] .pv-canvas { background: #0d131b; }

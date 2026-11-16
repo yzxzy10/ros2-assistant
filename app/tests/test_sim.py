@@ -393,6 +393,42 @@ def case_contact():
                   "转向机顶 %.3f 插进车体底面 %.3f（不再悬空）" % (rack_top, body_bottom))
 
 
+def case_conventions():
+    print("\n[10] 按资料库规范生成：传感器要真存在、顺序要对")
+    import re
+    sp = sim_spec.normalize({"brief": "四轮汽车，能转向", "package": "conv"})
+    f = sim_build.build(sp)
+    u = f["urdf/conv.urdf.xacro"]
+    launch = f["launch/sim.launch.py"]
+
+    check("gpu_lidar" in u, "雷达有真实 <sensor> 定义（不只是外形）")
+    check('gz_frame_id" >lidar_link' in u.replace(">", "> ") or "gz_frame_id>lidar_link" in u,
+          "传感器带 gz_frame_id")
+    check("/scan@sensor_msgs/msg/LaserScan" in launch, "/scan 已桥接到 ROS")
+    check(sim_gate.check(sp, f)["passed"], "规范闸门 G7 通过")
+
+    # 负例：把传感器类型写坏、把桥接删掉，都必须拦住
+    bad = dict(f)
+    bad["urdf/conv.urdf.xacro"] = u.replace('type="gpu_lidar"', 'type="none"')
+    check(not sim_gate.check(sp, bad)["passed"], "传感器类型写错会被 G7 拦下")
+
+    bad2 = dict(f)
+    bad2["urdf/conv.urdf.xacro"] = re.sub(r'<gazebo reference="lidar_link">.*?</gazebo>', "", u, flags=re.S)
+    check(not sim_gate.check(sp, bad2)["passed"], "整块传感器缺失会被 G7 拦下")
+
+    bad3 = dict(f)
+    bad3["launch/sim.launch.py"] = launch.replace(
+        '            "/scan@sensor_msgs/msg/LaserScan]gz.msgs.LaserScan",\n', "")
+    check(not sim_gate.check(sp, bad3)["passed"], "漏掉 /scan 桥接会被 G7 拦下")
+
+    # link 子元素顺序：visual → collision → inertial
+    first_link = re.search(r"<link name=\"base_link\">(.*?)</link>", u, re.S).group(1)
+    order = [m.group(1) for m in re.finditer(r"<(visual|collision|inertial)[ >]", first_link)]
+    check(order[:3] == ["visual", "collision", "inertial"]
+          or order.index("collision") < order.index("inertial"),
+          "link 子元素顺序符合规范（visual→collision→inertial）")
+
+
 def main():
     case_arm()
     case_diff()
@@ -403,6 +439,7 @@ def main():
     case_wheels()
     case_arm_shape()
     case_contact()
+    case_conventions()
     print("\n" + "=" * 50)
     if _FAIL:
         print("失败 %d 项：" % len(_FAIL))
