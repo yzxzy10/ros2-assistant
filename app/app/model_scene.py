@@ -261,13 +261,14 @@ def build_scene(sess, pkg=None):
 MESH_TOTAL_LIMIT = 1_200_000      # 一场预览最多带 1.2MB 网格，超了退回虚线框
 
 
-def _attach_mesh_data(scene, pkg_root):
+def _attach_mesh_data(scene, pkg_root, limit=None):
     """把 mesh 文件的原始字节以 base64 塞进场景，前端解析后直接画。
 
     为什么内联而不是给个 URL：预览要能在独立演示页（无后端）里跑，
     多一个取文件的接口就多一条只能在服务器上用的路径。
     """
     import base64
+    cap = MESH_TOTAL_LIMIT if limit is None else limit
     total = 0
     for link in scene["links"]:
         for v in link["visuals"]:
@@ -279,7 +280,7 @@ def _attach_mesh_data(scene, pkg_root):
                 size = os.path.getsize(path)
             except OSError:
                 continue
-            if total + size > MESH_TOTAL_LIMIT:
+            if total + size > cap:
                 continue
             try:
                 with open(path, "rb") as f:
@@ -291,4 +292,8 @@ def _attach_mesh_data(scene, pkg_root):
             g["bytes"] = len(raw)
     if total:
         scene["mesh_bytes"] = total
+        # 网格已经内联进来了，就一定会按实体渲染 —— 去掉「尺寸未知、显示为虚线框」的提示，
+        # 否则界面会挂一条与实际不符的警告（用户会以为模型没画出来）
+        scene["warnings"] = [w for w in scene.get("warnings", [])
+                             if "虚线框" not in w]
     return scene

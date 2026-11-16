@@ -27,15 +27,42 @@ from app import model_scene  # noqa: E402
 TITLE = "仿真模型预览"
 
 
+def _mesh_stats(scene):
+    """统计网格件数与三角面（二进制 STL 每面 50 字节）。"""
+    n = tris = 0
+    for l in scene["links"]:
+        for v in l["visuals"]:
+            g = v["geometry"]
+            if g.get("kind") != "mesh":
+                continue
+            n += 1
+            if g.get("bytes"):
+                tris += g["bytes"] // 50
+    return n, tris
+
+
 def _auto_bits(scene):
     """从场景里认出这是什么，用来生成标题与一句话简介。"""
     names = [l["name"] for l in scene["links"]]
     joints = [j["name"] for j in scene["joints"]]
     steers = [n for n in joints if "steer_joint" in n]
     wheels = [n for n in names if n.endswith("wheel_link")]
-    if any(n.startswith("joint") for n in joints) or "tool0" in names:
-        n_mov = len([j for j in scene["joints"] if j["type"] in ("revolute", "prismatic")])
-        return ("机械臂 · 仿真模型", "共 %d 个可动关节，末端在 tool0。" % n_mov)
+    moving = [j for j in scene["joints"] if j["type"] in ("revolute", "prismatic")]
+    n_mesh, n_tri = _mesh_stats(scene)
+    mesh_note = ("，%d 件真实网格共 %s 个三角面" % (n_mesh, format(n_tri, ","))) if n_mesh else ""
+
+    # 关节名不一定是 joint1 这种：真实 CAD 导出常见 1_JOINT / 2_JOINT。
+    # 判据改成「有可动关节、又没有轮子」就是机械臂。
+    if moving and not wheels:
+        n_rev = len([j for j in moving if j["type"] == "revolute"])
+        n_pri = len([j for j in moving if j["type"] == "prismatic"])
+        kind = []
+        if n_rev:
+            kind.append("%d 个转动轴" % n_rev)
+        if n_pri:
+            kind.append("%d 个移动轴" % n_pri)
+        return ("%d 轴机械臂 · 仿真模型" % len(moving),
+                "共 %d 个可动关节（%s）%s。" % (len(moving), " + ".join(kind), mesh_note))
     if steers:
         return ("四轮阿克曼转向车 · 仿真模型",
                 "后轮驱动、前轮打方向（%d 个转向关节 + %d 个轮子），"
@@ -52,13 +79,23 @@ def build(urdf_path, out_path, pkg="", title="", pose=None, intro=""):
     # URDF 同级目录的上一层就是包根（urdf/ -> pkg/），有 meshes/ 就把网格一起内联
     pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(urdf_path)))
     if os.path.isdir(os.path.join(pkg_root, "meshes")):
-        model_scene._attach_mesh_data(scene, pkg_root)
+        # 独立页面是本地文件，不用受服务端 1.2MB 的流量约束；
+        # 真实 CAD 导出的网格动辄几 MB，按 24MB 放开
+        model_scene._attach_mesh_data(scene, pkg_root, limit=24 * 1024 * 1024)
 
     # 零位往往是一条直杆，看不出形态；演示页允许注入一个姿态
     if pose:
         for j in scene["joints"]:
             if j["name"] in pose:
                 j["value"] = pose[j["name"]]
+
+    # 细长模型给高一点的画布
+    has_wheel = any(l["name"].endswith("wheel_link") for l in scene["links"])
+    if not has_wheel:
+        scene["canvas_height"] = 420
+        scene["view_az"] = 0.95
+        # 俯角要留低一点：抬高会把这叠板件压成「一张饼」，看不出立柱和层高
+        scene["view_el"] = 0.28
 
     auto_title, auto_intro = _auto_bits(scene)
     title = title or auto_title
@@ -72,11 +109,23 @@ def build(urdf_path, out_path, pkg="", title="", pose=None, intro=""):
         if j["type"] == "fixed":
             continue
         lim = j.get("limit") or [0, 0]
-        rng = ("0 – %.0f mm" % (lim[1] * 1000)) if j["type"] == "prismatic" \
-            else "±%.0f°" % (lim[1] * 180 / 3.14159)
+        if j["type"] == "prismatic":
+            rng = "0 – %.0f mm" % (lim[1] * 1000)
+            verb = "沿"
+        else:
+            rng = "±%.0f°" % (lim[1] * 180 / 3.14159)
+            verb = "绕"
         axis = "xyz"[j["axis"].index(max(j["axis"]))]
-        rows.append("      <tr><td>%s</td><td>%s</td><td>绕 %s</td><td>%s</td></tr>"
-                    % (j["name"], "转动" if j["type"] == "revolute" else "平移", axis, rng))
+        sign = "-" if j["axis"][j["axis"].index(max(j["axis"]))] < 0 else ""
+        rpy = j.get("rpy") or [0, 0, 0]
+        rpy_txt = ("0 0 0" if max(abs(v) for v in rpy) < 1e-6
+                   else "%.3f %.3f %.3f" % (rpy[0], rpy[1], rpy[2]))
+        rows.append("      <tr><td>%s</td><td>%s</td><td>%s%s</td><td>%s</td>"
+                    "<td>%.1f  %.1f  %.1f</td><td>%s</td></tr>"
+                    % (j["name"], "转动" if j["type"] == "revolute" else "平移",
+                       verb, sign + axis, rng,
+                       j["xyz"][0] * 1000, j["xyz"][1] * 1000, j["xyz"][2] * 1000,
+                       rpy_txt))
 
     html = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -98,6 +147,12 @@ __CSS__
   .demo th { color: #4a5261; font-weight: 600; background: #fafbfc; }
   .demo td { color: #2b313d; font-family: ui-monospace, Menlo, Consolas, monospace; }
   .demo h2 { font-size: 15px; margin: 22px 0 8px; color: #1f2430; }
+  /* CAD 导出的模型常是纯白材质，浅色舞台会把轮廓糊掉 */
+  #slot .pv-canvas {
+    background:
+      radial-gradient(120% 90% at 50% 8%, #f4f6f9 0%, #e4e8ee 62%, #d8dee7 100%);
+  }
+  .demo .tbl { overflow-x: auto; }
   .demo .hint { font-size: 12px; color: #6b7280; margin: 8px 0 0; }
 </style>
 </head>
@@ -108,12 +163,13 @@ __CSS__
   <div id="slot"></div>
 
   <h2>关节链</h2>
-  <table>
-    <thead><tr><th>关节</th><th>类型</th><th>轴</th><th>行程</th></tr></thead>
+  <div class="tbl"><table>
+    <thead><tr><th>关节</th><th>类型</th><th>轴</th><th>行程</th>
+      <th>原点 xyz (mm)</th><th>关节系 rpy (rad)</th></tr></thead>
     <tbody>
 __ROWS__
     </tbody>
-  </table>
+  </table></div>
   <p class="hint">工具栏可以切零位 / 演示姿态 / 坐标轴 / 自动旋转；下面的读数就是当前末端在 URDF 坐标系下的位姿。</p>
 </div>
 

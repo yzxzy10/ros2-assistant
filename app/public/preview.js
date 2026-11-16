@@ -114,7 +114,10 @@
     slot.appendChild(wrap);
 
     var W = canvasBox.clientWidth || 520;
-    var H = 320;
+    // 机械臂这类细长模型在 320px 高的画布里放不开，允许场景指定更高的画布
+    var H = Math.max(240, Math.min(620, data.canvas_height || 320));
+    // CSS 里 .pv-canvas 是固定 320px，渲染器改高度后必须同步容器，否则画布溢出去压住工具栏
+    canvasBox.style.height = H + "px";
 
     var scene = new THREE.Scene();
     var camera = new THREE.PerspectiveCamera(45, W / H, 0.001, 100);
@@ -128,19 +131,29 @@
     dir.position.set(1.2, 2.0, 1.6);
     scene.add(dir);
 
-    // 地面网格（three 坐标：y 朝上，所以地面在 y=0 平面）
-    var grid = new THREE.GridHelper(2, 20, 0xc3cad6, 0xe8ebf0);
-    grid.visible = false;
-    scene.add(grid);
+    // 辅助对象单独放一组：three 的 Box3.setFromObject 会把不可见子对象也算进去，
+    // 坐标轴 0.3m、网格 2m 一旦挂在模型组里，几十毫米的小模型就会被算成「大物体」，
+    // 取景距离按 0.3m 算 → 模型缩成画面里一小块。分开放就没这个问题。
+    var helpers = new THREE.Group();
+    helpers.rotation.x = -Math.PI / 2;    // 与 root 同向，坐标轴才是 URDF 的 x/y/z
+    scene.add(helpers);
+
+    var grid = null;
+    function makeGrid(size) {
+      if (grid) { helpers.remove(grid); grid.geometry.dispose(); grid.material.dispose(); }
+      grid = new THREE.GridHelper(size, 20, 0xc3cad6, 0xe8ebf0);
+      grid.visible = !!(axes && axes.visible);
+      helpers.add(grid);
+    }
 
     var root = new THREE.Group();
     root.rotation.x = -Math.PI / 2;   // URDF 是 z 朝上，three 是 y 朝上
     scene.add(root);
 
-    // URDF 坐标轴：挂在 root 里，跟着 -90° 旋转，显示的就是 x/y/z（z 朝上）
-    var axes = new THREE.AxesHelper(0.3);
+    // URDF 坐标轴：长度按模型尺寸缩放，长在 helpers 里
+    var axes = new THREE.AxesHelper(1);
     axes.visible = false;
-    root.add(axes);
+    helpers.add(axes);
 
     var byName = {};
     (data.links || []).forEach(function (l) { byName[l.name] = l; });
@@ -290,10 +303,18 @@
     // 用包围球半径 + 垂直视角算距离：比「最大边长 × 系数」稳，
     // 细长物体（机械臂）不会被拉太远，扁平物体（底盘）也不会溢出画面。
     var sphere = box.getBoundingSphere(new THREE.Sphere());
-    var radius = Math.max(sphere.radius, 0.05);
+    var radius = Math.max(sphere.radius, 0.01);   // 微型模型（几十毫米）也要能取好景
     // 默认取「侧前方 3/4 视角」：俯角太大时车体会把轮子完全挡住，
     // 而轮子和转向正是要展示的部分。
-    var az = 1.05, el = 0.24, dist = radius / Math.sin(camera.fov * Math.PI / 360);
+    // 场景可以指定默认视角：扁平底盘要压低俯角才看得见轮子，
+    // 而紧凑机构（板件叠在一起）反而需要抬高俯角才分得清层次
+    var az = (typeof data.view_az === "number") ? data.view_az : 1.05;
+    var el = (typeof data.view_el === "number") ? data.view_el : 0.24;
+    var dist = radius / Math.sin(camera.fov * Math.PI / 360);
+
+    // 辅助对象按模型实际尺寸定，不再写死 0.3m / 2m
+    axes.scale.setScalar(Math.max(radius * 0.85, 0.01));
+    makeGrid(Math.max(radius * 4, 0.05));
 
     function placeCam(d) {
       camera.position.set(
@@ -316,7 +337,8 @@
         });
       });
     });
-    (function fitView() {
+    var userZoomed = false;      // 用户自己缩放过就不再自动重取景，免得抢镜头
+    function fitView() {
       var d = radius / Math.sin(camera.fov * Math.PI / 360) * 1.4;
       var inv = new THREE.Matrix4();
       for (var i = 0; i < 4; i++) {
@@ -332,7 +354,8 @@
       }
       dist = d;
       placeCam(d);
-    })();
+    }
+    fitView();
 
     function updateCam() { placeCam(dist); }
     // 浏览器表单恢复、「手滑」之外的任何改动，只要 DOM 与数据不一致就按数据回写，
@@ -378,6 +401,7 @@
     });
     cv.addEventListener("wheel", function (e) {
       e.preventDefault();
+      userZoomed = true;
       dist = Math.max(radius * 0.8, Math.min(radius * 12, dist * (1 + e.deltaY * 0.001)));
       draw();
     }, { passive: false });
@@ -501,8 +525,12 @@
     // 末端：优先 tool0，否则沿关节链取最深的那片叶子
     var endName = (function () {
       if (linkNodes.tool0) return "tool0";
-      // 车上没有末端，读车体位姿更有意义；否则会显示某个轮子的坐标
-      if (linkNodes.base_link) return "base_link";
+      // 带轮子的车没有末端执行器，读车体位姿才有意义；
+      // 机械臂（哪怕是 1_JOINT 这种命名、没有 tool0）要读链条最深的末端
+      var hasWheel = Object.keys(linkNodes).some(function (n) {
+        return n.indexOf("wheel_link") >= 0;
+      });
+      if (hasWheel && linkNodes.base_link) return "base_link";
       var best = data.root, bestD = -1, stack = [[data.root, 0]];
       while (stack.length) {
         var cur = stack.pop(), d = cur[1];
@@ -572,8 +600,20 @@
           return it.j.type === "prismatic" ? 0.015 : 0;   // 两指各合一半
         });
       }
-      return sliders.map(function (it) {
-        return it.j.name.indexOf("steer") >= 0 ? 0.35 : 0;
+      if (sliders.some(function (it) { return it.j.name.indexOf("steer") >= 0; })) {
+        return sliders.map(function (it) {
+          return it.j.name.indexOf("steer") >= 0 ? 0.35 : 0;
+        });
+      }
+      // 其它机械臂（关节名不叫 joint1、也没有 tool0）：按行程的一半摆开，
+      // 这样「演示姿态」按钮对任意 URDF 都有意义，而不是一动不动
+      return sliders.map(function (it, i) {
+        var lim = it.j.limit || [-1, 1];
+        if (it.j.type === "prismatic") return lim[1] * 0.6;
+        var hi = Math.min(Math.abs(lim[0]), Math.abs(lim[1]));
+        // 取行程的一小段即可（0.18 约 32°）：幅度太大虽然仍是合法姿态，
+        // 但机构会横着支出画面，看不出原本的形态
+        return (i % 2 ? -1 : 1) * hi * 0.18;
       });
     }
 
@@ -606,6 +646,13 @@
 
     if (window.requestAnimationFrame) requestAnimationFrame(resetSliders);
     setTimeout(resetSliders, 260);
+    // Chrome/Edge 会在页面空闲后「恢复」上一次的表单值，时机晚于上面两次复位。
+    // 开一个 4 秒的限时自愈窗口（每 200ms 对齐一次数据源），之后自动停，不常驻空转。
+    var heal = 0, healTimer = setInterval(function () {
+      heal += 1;
+      resetSliders();
+      if (heal >= 20) clearInterval(healTimer);
+    }, 200);
 
     if ((data.warnings || []).length) {
       var warn = document.createElement("div");
@@ -635,6 +682,8 @@
         camera.aspect = W / H;
         camera.updateProjectionMatrix();
         renderer.setSize(W, H);
+        // 首次布局完成时宽高比才对，这时重算一次距离，否则模型会缩成一小块
+        if (!userZoomed) fitView();
         draw();
       });
       ro.observe(canvasBox);
