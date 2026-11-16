@@ -102,7 +102,8 @@ def build(urdf_path, out_path, pkg="", title="", pose=None, intro=""):
     intro = intro or auto_intro
 
     css = open(os.path.join(APP, "public", "style.css"), encoding="utf-8").read()
-    pv = open(os.path.join(APP, "public", "preview.js"), encoding="utf-8").read()
+    # 换引擎：内联 Babylon 查看器（三.js 版保留为 preview.js 以便回滚）
+    pv = open(os.path.join(APP, "public", "viewer_babylon.js"), encoding="utf-8").read()
 
     rows = []
     for j in scene["joints"]:
@@ -134,7 +135,12 @@ def build(urdf_path, out_path, pkg="", title="", pose=None, intro=""):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__</title>
 <script type="importmap">
-{"imports": {"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
 </script>
 <style>
 __CSS__
@@ -173,6 +179,16 @@ __ROWS__
   <p class="hint">工具栏可以切零位 / 演示姿态 / 坐标轴 / 自动旋转；下面的读数就是当前末端在 URDF 坐标系下的位姿。</p>
 </div>
 
+<script>
+  // 自检用：把错误写进标题，便于无人值守时定位
+  window.addEventListener("error", function (e) {
+    document.title = "ERR " + String(e.message || e).slice(0, 90);
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    var r = e.reason;
+    document.title = "REJ " + String((r && r.message) || r).slice(0, 90);
+  });
+</script>
 <script id="scene-data" type="application/json">__SCENE__</script>
 <script>__PREVIEW__</script>
 <script>
@@ -186,11 +202,18 @@ __ROWS__
   window.RTPreview.mount(document.getElementById("slot"), "demo", "__PKG__");
 
   // 自检：把渲染结果写进标题，方便无人值守时确认是否真的画出来了
-  setTimeout(function () {
-    var n = document.querySelectorAll("#slot input[type=range]").length;
-    var cv = document.querySelectorAll("#slot canvas").length;
-    document.title = (cv ? "OK " : "FAIL ") + n + "/" + cv;
-  }, 1800);
+  (function poll(tries) {
+    setTimeout(function () {
+      var n = document.querySelectorAll("#slot input[type=range]").length;
+      var cv = document.querySelectorAll("#slot canvas").length;
+      if (cv || tries <= 0) {
+        document.title = (cv ? "OK " : "FAIL ") + n + "/" + cv + " " +
+          (window.RTPreview && window.RTPreview.engine || "");
+        return;
+      }
+      poll(tries - 1);
+    }, 700);
+  })(14);
 </script>
 </body>
 </html>
