@@ -24,10 +24,29 @@ sys.path.insert(0, APP)
 
 from app import model_scene  # noqa: E402
 
-TITLE = "六轴机械臂 · 仿真模型"
+TITLE = "仿真模型预览"
 
 
-def build(urdf_path, out_path, pkg="", title=TITLE, pose=None, intro=""):
+def _auto_bits(scene):
+    """从场景里认出这是什么，用来生成标题与一句话简介。"""
+    names = [l["name"] for l in scene["links"]]
+    joints = [j["name"] for j in scene["joints"]]
+    steers = [n for n in joints if "steer_joint" in n]
+    wheels = [n for n in names if n.endswith("wheel_link")]
+    if any(n.startswith("joint") for n in joints) or "tool0" in names:
+        n_mov = len([j for j in scene["joints"] if j["type"] in ("revolute", "prismatic")])
+        return ("机械臂 · 仿真模型", "共 %d 个可动关节，末端在 tool0。" % n_mov)
+    if steers:
+        return ("四轮阿克曼转向车 · 仿真模型",
+                "后轮驱动、前轮打方向（%d 个转向关节 + %d 个轮子），"
+                "车底是转向机 + 齿条 + 左右拉杆的梯形连杆造型。" % (len(steers), len(wheels)))
+    if wheels:
+        return ("差速底盘 · 仿真模型",
+                "%d 个轮子（%d 个驱动），顶部带雷达。" % (len(wheels), len(wheels) // 2))
+    return (TITLE, "")
+
+
+def build(urdf_path, out_path, pkg="", title="", pose=None, intro=""):
     urdf = open(urdf_path, encoding="utf-8").read()
     scene = model_scene.parse_model(urdf)
     # URDF 同级目录的上一层就是包根（urdf/ -> pkg/），有 meshes/ 就把网格一起内联
@@ -40,6 +59,10 @@ def build(urdf_path, out_path, pkg="", title=TITLE, pose=None, intro=""):
         for j in scene["joints"]:
             if j["name"] in pose:
                 j["value"] = pose[j["name"]]
+
+    auto_title, auto_intro = _auto_bits(scene)
+    title = title or auto_title
+    intro = intro or auto_intro
 
     css = open(os.path.join(APP, "public", "style.css"), encoding="utf-8").read()
     pv = open(os.path.join(APP, "public", "preview.js"), encoding="utf-8").read()

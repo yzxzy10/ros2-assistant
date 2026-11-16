@@ -501,6 +501,8 @@
     // 末端：优先 tool0，否则沿关节链取最深的那片叶子
     var endName = (function () {
       if (linkNodes.tool0) return "tool0";
+      // 车上没有末端，读车体位姿更有意义；否则会显示某个轮子的坐标
+      if (linkNodes.base_link) return "base_link";
       var best = data.root, bestD = -1, stack = [[data.root, 0]];
       while (stack.length) {
         var cur = stack.pop(), d = cur[1];

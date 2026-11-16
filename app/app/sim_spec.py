@@ -162,8 +162,9 @@ def _normalize_diff(raw):
     base_l = _num(raw.get("base_length"), max(0.22, wheel_r * 4), 0.10, 2.0)
     base_h = _num(raw.get("base_height"), 0.08, 0.02, 0.6)
     # 轮距 = 车宽 + 轮宽（轮心到轮心），允许显式覆盖
-    # 轮子内侧面与车体侧面齐平：留出间隙的话轮子看起来是飘着的
-    sep = _num(raw.get("wheel_separation"), base_w + wheel_w, 0.10, 1.5)
+    # 轮子略微探出车身（0.7 倍轮宽）：完全齐平会跟侧裙糊成一块，看不出是四个轮子；
+    # 再大就成「飘着」了，这个比例刚好既看得见又有轮毂套连着车体
+    sep = _num(raw.get("wheel_separation"), base_w + wheel_w * 1.7, 0.10, 1.5)
 
     return {
         "base_length": round(base_l, 4),

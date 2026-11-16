@@ -270,9 +270,10 @@ def _base_link_xml(spec, items):
                             x_expr, "0", "0", "sensor"))
 
     # 左右侧裙：内面与箱体侧面重合
+    # 侧裙贴在车身上缘：放到中间会把轮子挡掉，看着像没有轮子
     for y_expr in ("${base_width/2+0.007}", "${-base_width/2-0.007}"):
-        out.append(_vis_box("${base_length*0.80}", "0.014", "${base_height*0.45}",
-                            "0", y_expr, "0", "sensor"))
+        out.append(_vis_box("${base_length*0.80}", "0.014", "${base_height*0.22}",
+                            "0", y_expr, "${base_height*0.30}", "sensor"))
 
     # 相机：支架坐在顶板上，镜头从支架前脸伸出去
     cam_z = "${base_height/2+0.012+0.011}"
