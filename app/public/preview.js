@@ -389,7 +389,10 @@
 
       input.min = j.limit[0];
       input.max = j.limit[1];
-      input.step = j.type === "prismatic" ? 0.001 : 0.01;
+      // step 不能用固定值：min 是 -3.1416，网格起点不在 0 上，
+      // 结果是「零位」被吸附成 -0.0016 rad（-0.09°），滑块永远回不到正零。
+      input.step = "any";
+      input.dataset.round = j.type === "prismatic" ? "0.0005" : "0.001";
       input.value = j.value;
       val.textContent = fmt(j.value, j.type);
 
@@ -413,6 +416,8 @@
       input.oninput = function () {
         var v = parseFloat(input.value);
         if (!isFinite(v)) return;
+        var r = parseFloat(input.dataset.round || "0");
+        if (r > 0) v = Math.round(v / r) * r;   // 收一下浮点毛刺，读数好看些
         if (!armed) {
           input.value = j.value;
           val.textContent = fmt(j.value, j.type);

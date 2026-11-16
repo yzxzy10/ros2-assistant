@@ -21,7 +21,7 @@ import math
 
 from . import sim_templates as T
 
-_MAT = ("accent", "metal")
+_MAT = ("metal",)
 
 
 def _f(v):
@@ -70,7 +70,7 @@ def _link_block(idx, j, nxt_vec, spec):
     link = j["link"]
     L, rpy = _seg(nxt_vec)
     mid = [c / 2.0 for c in nxt_vec]
-    mat = _MAT[idx % 2]
+    mat = "metal"      # 真实的 UR5e / Panda 是浅灰机身，橙灰相间看着像玩具
     hx, hy, hz = rpy
     parts = ['  <link name="%s">' % link]
 
@@ -86,14 +86,14 @@ def _link_block(idx, j, nxt_vec, spec):
     parts.append(
         '    <visual>\n'
         '      <origin xyz="0 0 0" rpy="0 0 0"/>\n'
-        '      <geometry><cylinder radius="${%s_radius*1.5}" length="${%s_radius*1.3}"/></geometry>\n'
+        '      <geometry><cylinder radius="${%s_radius*1.22}" length="${%s_radius*1.35}"/></geometry>\n'
         '      <material name="joint"/>\n'
         '    </visual>' % (link, link))
     if L > 0.05:
         parts.append(
             '    <visual>\n'
             '      <origin xyz="%s" rpy="%s %s %s"/>\n'
-            '      <geometry><cylinder radius="${%s_radius*1.35}" length="${%s_radius*1.1}"/></geometry>\n'
+            '      <geometry><cylinder radius="${%s_radius*1.18}" length="${%s_radius*1.15}"/></geometry>\n'
             '      <material name="joint"/>\n'
             '    </visual>' % (_vec(nxt_vec), _f(hx), _f(hy), _f(hz), link, link))
 
@@ -141,15 +141,16 @@ def _joint_block(j, parent, is_last=False):
 GRIPPER_BLOCK = """  <!-- 夹爪：掌 + 两个平移手指。0 是张开，0.02 是闭合，
        由 gripper_controller 单独控制（见 config/arm_controllers.yaml）。 -->
   <link name="gripper_base_link">
-    <visual>
-      <origin xyz="0 0 %(palm_z)s" rpy="0 0 0"/>
-      <geometry><box size="0.075 0.055 0.030"/></geometry>
-      <material name="joint"/>
-    </visual>
+    <!-- 法兰 0 → 0.020，掌 0.020 → 0.050，手指从 0.045 往前伸：一路贴着，不留缝 -->
     <visual>
       <origin xyz="0 0 %(wrist_z)s" rpy="0 0 0"/>
       <geometry><cylinder radius="0.026" length="0.020"/></geometry>
       <material name="metal"/>
+    </visual>
+    <visual>
+      <origin xyz="0 0 %(palm_z)s" rpy="0 0 0"/>
+      <geometry><box size="0.075 0.055 0.030"/></geometry>
+      <material name="joint"/>
     </visual>
     <collision>
       <origin xyz="0 0 %(palm_z)s" rpy="0 0 0"/>
@@ -188,7 +189,7 @@ GRIPPER_BLOCK = """  <!-- 夹爪：掌 + 两个平移手指。0 是张开，0.02
   <joint name="left_finger_joint" type="prismatic">
     <parent link="gripper_base_link"/>
     <child link="left_finger_link"/>
-    <origin xyz="0 0.026 %(palm_z)s" rpy="0 0 0"/>
+    <origin xyz="0 0.026 %(finger_z)s" rpy="0 0 0"/>
     <axis xyz="0 -1 0"/>
     <limit lower="0.0" upper="0.020" effort="20" velocity="0.05"/>
     <dynamics damping="0.20" friction="0.0"/>
@@ -214,7 +215,7 @@ GRIPPER_BLOCK = """  <!-- 夹爪：掌 + 两个平移手指。0 是张开，0.02
   <joint name="right_finger_joint" type="prismatic">
     <parent link="gripper_base_link"/>
     <child link="right_finger_link"/>
-    <origin xyz="0 -0.026 %(palm_z)s" rpy="0 0 0"/>
+    <origin xyz="0 -0.026 %(finger_z)s" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
     <limit lower="0.0" upper="0.020" effort="20" velocity="0.05"/>
     <dynamics damping="0.20" friction="0.0"/>
@@ -247,8 +248,25 @@ def build_arm_urdf(spec):
 
     props.append('  <xacro:property name="tool_len" value="%s"/>' % _f(tool_len))
 
-    gripper = GRIPPER_BLOCK % {"palm_z": _f(tool_len + 0.015),
-                               "wrist_z": _f(tool_len + 0.004)}
+    # 底座立柱：第一关节在 d1（UR5e 是 0.1625），而底座只有 base_height 高，
+    # 中间那段如果什么都不画，模型就是「底座和手臂各自浮着」。
+    j1z = js[0]["xyz"][2]
+    col = j1z - spec["base_height"]
+    if col > 0.005:
+        base_column = (
+            '    <visual>\n'
+            '      <origin xyz="0 0 %s" rpy="0 0 0"/>\n'
+            '      <geometry><cylinder radius="${base_radius*0.55}" length="%s"/></geometry>\n'
+            '      <material name="metal"/>\n'
+            '    </visual>\n' % (_f(spec["base_height"] + col / 2.0), _f(col)))
+    else:
+        base_column = ""
+
+    # 注意：GRIPPER_BLOCK 挂在 tool0 上，坐标**从 0 起算**。
+    # 之前写成 tool_len + 0.015，等于把 tool0 的位置又加了一遍，
+    # 夹爪整体比末端高出一个 tool_len，视觉上就是「夹爪悬空」。
+    gripper = GRIPPER_BLOCK % {"palm_z": "0.035", "wrist_z": "0.010",
+                               "finger_z": "0.045"}
 
     urdf = (T.ARM_URDF_HEAD
             .replace("{{pkg}}", spec["package"])
@@ -258,5 +276,6 @@ def build_arm_urdf(spec):
             .replace("{{properties}}", "\n".join(props))
             .replace("{{link_blocks}}", "".join(links) + "".join(joints) + gripper)
             .replace("{{last_link}}", js[-1]["link"])
-            .replace("{{last_length_attr}}", "tool_len"))
+            .replace("{{last_length_attr}}", "tool_len")
+            .replace("{{base_column}}", base_column))
     return urdf, refs

@@ -321,6 +321,7 @@ ARM_URDF_HEAD = """<?xml version="1.0"?>
       <geometry><box size="${base_radius*1.6} ${base_radius*1.6} 0.016"/></geometry>
       <material name="joint"/>
     </visual>
+{{base_column}}
     <collision>
       <origin xyz="0 0 ${base_height/2}" rpy="0 0 0"/>
       <geometry><cylinder radius="${base_radius}" length="${base_height}"/></geometry>
