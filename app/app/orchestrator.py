@@ -290,13 +290,18 @@ class Session(object):
         脚本首行的 shebang 失效。
         """
         root = os.path.join(self.ws_root(), "src", pkg)
-        for rel, text in files.items():
+        for rel, text in files.items():   # text 也可能是 bytes（mesh）
             path = os.path.join(root, rel.replace("/", os.sep))
             parent = os.path.dirname(path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            with open(path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(text)
+            if isinstance(text, (bytes, bytearray)):
+                # 二进制（网格）：不能走文本模式，也不能做换行替换
+                with open(path, "wb") as f:
+                    f.write(bytes(text))
+            else:
+                with open(path, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(text)
         return root
 
     def file_tree(self):

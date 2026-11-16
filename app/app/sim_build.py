@@ -6,6 +6,7 @@
 """
 from . import sim_spec
 from . import sim_arm
+from . import sim_panda
 from . import sim_chassis
 from . import sim_templates as T
 
@@ -26,7 +27,8 @@ def build(spec):
     pkg = spec["package"]
     files = {
         "package.xml": _package_xml(spec),
-        "CMakeLists.txt": _render(T.CMAKE_LISTS, pkg=pkg),
+        "CMakeLists.txt": _render(T.CMAKE_LISTS, pkg=pkg,
+                                  extra_dirs=" meshes" if _has_mesh(spec) else ""),
         "worlds/empty.sdf": T.WORLD_EMPTY,
         "config/display.rviz": _rviz(spec),
         "launch/display.launch.py": _render(T.DISPLAY_LAUNCH, pkg=pkg),
@@ -107,23 +109,40 @@ def _readme(spec):
 
 # ---------- 机械臂 ----------
 
+def _has_mesh(spec):
+    """机械臂走真模型模式时要安装 meshes/，否则 colcon 装完运行期找不到网格。"""
+    return bool(spec.get("real_mesh"))
+
+
 def _build_arm(spec):
     """机械臂：偏置连杆 + 关节壳 + 可动夹爪（结构见 sim_arm）。"""
     pkg = spec["package"]
-    urdf, refs = sim_arm.build_arm_urdf(spec)
-    js = sim_arm.joints_with_offsets(spec)
+
+    if spec.get("real_mesh"):
+        # 真模型模式：关节参数与网格都来自资料库原始文件
+        urdf = sim_panda.build_urdf(pkg, spec["base_height"])
+        js = sim_panda.spec_joints()
+        refs = [T.ARM_GAZEBO_REF % {"link": j["link"], "mat": "Grey"} for j in js]
+        mesh_files = sim_panda.mesh_files()
+    else:
+        urdf, refs = sim_arm.build_arm_urdf(spec)
+        js = sim_arm.joints_with_offsets(spec)
+        mesh_files = {}
 
     rc = [_render(T.ARM_RC_JOINT, joint_name=j["name"],
                   lower=j["lower"], upper=j["upper"]) for j in js]
     # 夹爪两指也进 ros2_control：0 张开、0.02 闭合
-    for name in sim_arm.GRIPPER_JOINTS:
-        rc.append(_render(T.ARM_RC_JOINT, joint_name=name, lower=0.0, upper=0.02))
+    finger_names = (("left_finger_joint", "right_finger_joint")
+                    if spec.get("real_mesh") else sim_arm.GRIPPER_JOINTS)
+    finger_hi = 0.04 if spec.get("real_mesh") else 0.02
+    for name in finger_names:
+        rc.append(_render(T.ARM_RC_JOINT, joint_name=name, lower=0.0, upper=finger_hi))
 
     joints_yaml = "\n".join("      - %s" % j["name"] for j in js)
-    grip_yaml = "\n".join("      - %s" % n for n in sim_arm.GRIPPER_JOINTS)
+    grip_yaml = "\n".join("      - %s" % n for n in finger_names)
     grip_ctrl = "gripper_controller"
 
-    return {
+    out = {
         "urdf/%s.urdf.xacro" % pkg: urdf,
         "urdf/%s.ros2_control.xacro" % pkg: _render(
             T.ARM_ROS2_CONTROL, pkg=pkg, joint_blocks="\n".join(rc)),
@@ -138,6 +157,8 @@ def _build_arm(spec):
             T.ARM_SIM_LAUNCH, pkg=pkg, controller_name=spec["controller_name"],
             gripper_controller=grip_ctrl),
     }
+    out.update(mesh_files)      # 二进制网格：bytes
+    return out
 
 
 # ---------- 底盘（差速 / 阿克曼） ----------
@@ -152,5 +173,15 @@ def _build_diff(spec):
 
 
 def describe_files(files):
-    """把文件清单转成 [(路径, 行数)]，供回复里展示。"""
-    return [(p, files[p].count("\n") + 1) for p in sorted(files)]
+    """把文件清单转成 [(路径, 行数或 None)]，供回复里展示。
+
+    网格是二进制（bytes），不能按文本数行——返回 None 由调用方显示体积。
+    """
+    out = []
+    for p in sorted(files):
+        v = files[p]
+        if isinstance(v, (bytes, bytearray)):
+            out.append((p, None))
+        else:
+            out.append((p, v.count("\n") + 1))
+    return out

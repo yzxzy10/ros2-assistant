@@ -92,7 +92,16 @@ def _geometry(el, props):
                 return {"kind": "sphere", "radius": r}
     mesh = el.find(".//mesh")
     if mesh is not None:
-        return {"kind": "mesh", "file": (mesh.get("filename") or "").split("/")[-1]}
+        fn = mesh.get("filename") or ""
+        rel = fn.split("package://", 1)[-1]
+        rel = rel.split("/", 1)[-1] if "/" in rel else rel   # 去掉包名
+        sc = (mesh.get("scale") or "1 1 1").split()
+        try:
+            scale = [float(v) for v in (sc + ["1", "1", "1"])[:3]]
+        except ValueError:
+            scale = [1.0, 1.0, 1.0]
+        return {"kind": "mesh", "file": fn.split("/")[-1], "rel": rel,
+                "scale": scale}
     return None
 
 
@@ -114,7 +123,7 @@ def _visuals_of(link, props, mats, warnings):
             if not color and mat.get("name"):
                 color = mats.get(mat.get("name"))
         if geo["kind"] == "mesh":
-            warnings.append("「%s」用 mesh 绘制（%s），尺寸未知，预览里显示为虚线框"
+            warnings.append("「%s」用 mesh 绘制（%s），尺寸未知时预览显示为虚线框"
                             % (link.get("name"), geo.get("file") or "mesh"))
         out.append({"geometry": geo, "xyz": xyz, "rpy": rpy, "color": color})
     return out
@@ -240,8 +249,46 @@ def build_scene(sess, pkg=None):
         if score > best_score:
             best, best_score = scene, score
             best["source"] = rel
+    if best and best.get("ok"):
+        _attach_mesh_data(best, os.path.dirname(os.path.dirname(full)))
     if not best:
         return {"ok": False, "error": "没找到可解析的模型",
                 "tried": tried[:5]}
     best["candidates"] = [rel for rel, _f in cands[:12]]
     return best
+
+
+MESH_TOTAL_LIMIT = 1_200_000      # 一场预览最多带 1.2MB 网格，超了退回虚线框
+
+
+def _attach_mesh_data(scene, pkg_root):
+    """把 mesh 文件的原始字节以 base64 塞进场景，前端解析后直接画。
+
+    为什么内联而不是给个 URL：预览要能在独立演示页（无后端）里跑，
+    多一个取文件的接口就多一条只能在服务器上用的路径。
+    """
+    import base64
+    total = 0
+    for link in scene["links"]:
+        for v in link["visuals"]:
+            g = v["geometry"]
+            if g.get("kind") != "mesh" or not g.get("rel"):
+                continue
+            path = os.path.join(pkg_root, g["rel"].replace("/", os.sep))
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                continue
+            if total + size > MESH_TOTAL_LIMIT:
+                continue
+            try:
+                with open(path, "rb") as f:
+                    raw = f.read()
+            except OSError:
+                continue
+            total += len(raw)
+            g["data"] = base64.b64encode(raw).decode("ascii")
+            g["bytes"] = len(raw)
+    if total:
+        scene["mesh_bytes"] = total
+    return scene

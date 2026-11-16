@@ -429,6 +429,51 @@ def case_conventions():
           "link 子元素顺序符合规范（visual→collision→inertial）")
 
 
+def case_mesh():
+    print("\n[11] 真模型模式：从资料库拷网格")
+    import re
+    sp = sim_spec.normalize({"profile": "panda", "package": "pm"})
+    check(sp.get("real_mesh") is True, "Panda 自动走真模型模式")
+    f = sim_build.build(sp)
+    bins = [k for k, v in f.items() if isinstance(v, bytes)]
+    check(len(bins) >= 10, "包内有网格文件 %d 个" % len(bins))
+    check(sum(len(v) for v in [f[k] for k in bins]) < 200_000,
+          "网格总量 %d 字节（教学包可接受）" % sum(len(f[k]) for k in bins))
+
+    u = f["urdf/pm.urdf.xacro"]
+    check('filename="package://pm/meshes/panda/link1.stl"' in u, "URDF 用 package:// 引用网格")
+    check("meshes" in f["CMakeLists.txt"], "CMakeLists 会安装 meshes/ 目录")
+    check(sim_gate.check(sp, f)["passed"], "真模型包通过闸门")
+
+    # 网格引用必须能在包里找到
+    bad = {k: v for k, v in f.items() if not k.endswith("link3.stl")}
+    g = sim_gate.check(sp, bad)
+    check(not g["passed"], "网格文件缺失会被拦下")
+
+    # 场景解析：mesh 带包内相对路径与缩放
+    from app import model_scene
+    sc = model_scene.parse_model(u)
+    meshes = [v["geometry"] for l in sc["links"] for v in l["visuals"]
+              if v["geometry"]["kind"] == "mesh"]
+    check(len(meshes) >= 10, "场景里 mesh 视觉 %d 个" % len(meshes))
+    check(all(m.get("rel", "").startswith("meshes/") for m in meshes),
+          "mesh 记录包内相对路径，预览能定位")
+
+    # 回归：文件清单里有二进制时，描述不能按文本数行（线上曾 500）
+    desc = sim_build.describe_files(f)
+    check(all(not isinstance(n, int) or n > 0 for _p, n in desc), "文件清单能处理 bytes")
+    check(any(n is None for _p, n in desc), "网格条目标记为二进制")
+    md = __import__("app.wf_sim", fromlist=["wf_sim"]).render_markdown(
+        {"spec": sp, "files": f, "gate": sim_gate.check(sp, f), "brief": "panda"})
+    check("网格" in md, "回复里用体积展示网格文件")
+
+    # 参数化模式不能被误判
+    sp2 = sim_spec.normalize({"profile": "ur5e", "package": "u5"})
+    check(not sp2.get("real_mesh"), "UR5e 仍走参数化模式")
+    check(not any(isinstance(v, bytes) for v in sim_build.build(sp2).values()),
+          "参数化包不含二进制")
+
+
 def main():
     case_arm()
     case_diff()
@@ -440,6 +485,7 @@ def main():
     case_arm_shape()
     case_contact()
     case_conventions()
+    case_mesh()
     print("\n" + "=" * 50)
     if _FAIL:
         print("失败 %d 项：" % len(_FAIL))

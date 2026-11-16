@@ -30,6 +30,10 @@ TITLE = "六轴机械臂 · 仿真模型"
 def build(urdf_path, out_path, pkg="", title=TITLE, pose=None, intro=""):
     urdf = open(urdf_path, encoding="utf-8").read()
     scene = model_scene.parse_model(urdf)
+    # URDF 同级目录的上一层就是包根（urdf/ -> pkg/），有 meshes/ 就把网格一起内联
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(urdf_path)))
+    if os.path.isdir(os.path.join(pkg_root, "meshes")):
+        model_scene._attach_mesh_data(scene, pkg_root)
 
     # 零位往往是一条直杆，看不出形态；演示页允许注入一个姿态
     if pose:

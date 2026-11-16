@@ -149,6 +149,9 @@ def normalize(raw):
             spec["controller"] = "gz-sim-ackermann-steering-system"
     else:
         spec.update(_normalize_arm(src))
+        # 档案命中 panda 就用资料库原始网格（学生显式 real_mesh=false 时除外）
+        if spec.get("profile") == "panda" and raw.get("real_mesh") is not False:
+            spec["real_mesh"] = True
     return spec
 
 
@@ -246,6 +249,9 @@ def _normalize_arm(raw):
         "joints": links,
         "controller": "forward_command_controller",
         "controller_name": "arm_controller",
+        # 真模型模式：关节参数与网格都取自资料库原始文件（目前只有 Panda）
+        "real_mesh": bool(raw.get("real_mesh")) if "real_mesh" in raw
+                     else (raw.get("profile") == "panda"),
     }
 
 

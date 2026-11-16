@@ -37,7 +37,7 @@ def _order_ok(tag_names, canonical):
     return idx == sorted(idx)
 
 
-def check(urdf_text, launch_text="", pkg=""):
+def check(urdf_text, launch_text="", pkg="", files=None):
     """返回 (problems, checks)。problems 为违规说明列表，checks 为完成的检查项数。"""
     problems = []
     checks = 0
@@ -108,6 +108,20 @@ def check(urdf_text, launch_text="", pkg=""):
                 problems.append("传感器话题 %s 没在 launch 的 ros_gz_bridge 里桥接" % topic)
             elif gz_type not in launch_text:
                 problems.append("桥接 %s 的 Gazebo 消息类型缺失（应为 %s）" % (topic, gz_type))
+
+    # 4.5 mesh 引用必须真实存在（否则 Gazebo/RViz 报 "Unable to find file"）
+    mesh_refs = re.findall(r'<mesh\s+filename="package://([^/"]+)/([^"]+)"', urdf_text)
+    if mesh_refs:
+        checks += 1
+        pkg_name = pkg or (m.group(1) if m else "")
+        for m in re.finditer(r'<mesh\s+filename="package://([^/"]+)/([^"]+)"', urdf_text):
+            ref_pkg, rel = m.group(1), m.group(2)
+            if pkg_name and ref_pkg != pkg_name:
+                problems.append("mesh 引用包名「%s」与包名「%s」不一致" % (ref_pkg, pkg_name))
+                break
+            if files is not None and rel not in files:
+                problems.append("mesh 文件缺失：%s（URDF 引用了但包里没有）" % rel)
+                break
 
     # 5. ros2_control 接口规范（有才查）
     rc = root.find(".//ros2_control")

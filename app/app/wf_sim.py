@@ -114,7 +114,11 @@ def render_markdown(res):
     out.append("| 文件 | 行数 |")
     out.append("|---|---|")
     for p, n in sim_build.describe_files(files)[:10]:
-        out.append("| `%s` | %d |" % (p, n))
+        if n is None:
+            kb = len(files[p]) / 1024.0
+            out.append("| `%s` | 网格 %.0f KB |" % (p, kb))
+        else:
+            out.append("| `%s` | %d |" % (p, n))
     if len(files) > 10:
         out.append("| …共 %d 个 | |" % len(files))
 

@@ -189,7 +189,7 @@ def _check_conventions(g, spec, files):
     pkg = spec["package"]
     urdf = files.get("urdf/%s.urdf.xacro" % pkg, "")
     launch = files.get("launch/sim.launch.py", "")
-    problems, checks = sim_conventions.check(urdf, launch, pkg)
+    problems, checks = sim_conventions.check(urdf, launch, pkg, files)
     for _ in range(checks):
         g.ok("G7")
     for msg in problems:
@@ -208,6 +208,8 @@ def _result(g):
 def _check_basics(g, files):
     """XML 可解析 + Python 可编译 + 占位符无残留。"""
     for path, text in files.items():
+        if isinstance(text, (bytes, bytearray)):
+            continue        # 二进制（网格）不参与文本检查
         if "{{" in text:
             g.err("G6", "%s 里还有未替换的占位符" % path)
         if path.endswith((".xacro", ".xml", ".sdf")):

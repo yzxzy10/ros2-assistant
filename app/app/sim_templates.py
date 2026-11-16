@@ -57,7 +57,7 @@ project({{pkg}})
 find_package(ament_cmake REQUIRED)
 
 # 仿真包没有可执行节点，全部是描述与配置，整目录安装即可
-install(DIRECTORY urdf config launch worlds
+install(DIRECTORY urdf config launch worlds{{extra_dirs}}
         DESTINATION share/${PROJECT_NAME})
 
 install(PROGRAMS scripts/selfcheck.py

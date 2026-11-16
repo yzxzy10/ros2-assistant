@@ -43,6 +43,32 @@
     return (v * 180 / Math.PI).toFixed(0) + "°";
   }
 
+  // 二进制 STL → BufferGeometry。自己解析是为了不额外引 three/addons，
+  // 让独立演示页也能离线跑。
+  function stlGeometry(THREE, b64, scale) {
+    var bin;
+    try { bin = atob(b64); } catch (e) { return null; }
+    var n = bin.length;
+    if (n < 84) return null;
+    var buf = new ArrayBuffer(n), u8 = new Uint8Array(buf);
+    for (var i = 0; i < n; i++) u8[i] = bin.charCodeAt(i);
+    var dv = new DataView(buf);
+    var count = dv.getUint32(80, true);
+    if (count === 0 || 84 + count * 50 > n) return null;      // ASCII STL 走线框兜底
+    var pos = new Float32Array(count * 9);
+    for (var t = 0; t < count; t++) {
+      var o = 84 + t * 50 + 12;
+      for (var k = 0; k < 9; k++) pos[t * 9 + k] = dv.getFloat32(o + k * 4, true);
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.computeVertexNormals();
+    if (scale && (scale[0] !== 1 || scale[1] !== 1 || scale[2] !== 1)) {
+      geo.scale(scale[0], scale[1], scale[2]);
+    }
+    return geo;
+  }
+
   function render(slot, data, THREE) {
     slot.innerHTML = "";
 
@@ -133,6 +159,12 @@
                                       v.geometry.size[2]);
         } else if (kind === "sphere") {
           geo = new THREE.SphereGeometry(v.geometry.radius, 22, 16);
+        } else if (kind === "mesh" && v.geometry.data) {
+          geo = stlGeometry(THREE, v.geometry.data, v.geometry.scale);
+          if (!geo) {
+            geo = new THREE.BoxGeometry(0.04, 0.04, 0.04);
+            mat = new THREE.MeshBasicMaterial({ color: 0x9aa0a6, wireframe: true });
+          }
         } else {
           geo = new THREE.BoxGeometry(0.03, 0.03, 0.03);
           mat = new THREE.MeshBasicMaterial({ color: 0x9aa0a6, wireframe: true });
@@ -303,10 +335,25 @@
     })();
 
     function updateCam() { placeCam(dist); }
+    // 浏览器表单恢复、「手滑」之外的任何改动，只要 DOM 与数据不一致就按数据回写，
+    // 保证界面上看到的永远是真实关节值
+    function syncSliders() {
+      sliders.forEach(function (it) {
+        var want = String(it.j.value);
+        if (it.input.value === want) return;
+        it.input.value = it.j.value;
+        it.val.textContent = fmt(it.j.value, it.j.type);
+        applyPose();
+      });
+    }
+
     function draw() {
       updateCam();
       renderer.render(scene, camera);
-      if (roReady) updateReadout();      // 每次重绘同步刷新位置读数
+      if (roReady) {
+        syncSliders();
+        updateReadout();      // 每次重绘同步刷新位置读数
+      }
     }
     draw();
 
@@ -389,9 +436,15 @@
 
       input.min = j.limit[0];
       input.max = j.limit[1];
+      // 有的关节零位不在行程内（Panda 的 joint4 是 [-176°, -4°]），
+      // 直接设 0 会被浏览器夹到边界，看起来像「初值错了」——取行程中点更合理
+      if (j.value < j.limit[0] || j.value > j.limit[1]) {
+        j.value = (j.limit[0] + j.limit[1]) / 2;
+      }
       // step 不能用固定值：min 是 -3.1416，网格起点不在 0 上，
       // 结果是「零位」被吸附成 -0.0016 rad（-0.09°），滑块永远回不到正零。
       input.step = "any";
+      input.autocomplete = "off";   // 浏览器会「恢复」上次的表单值，关节初值会被污染
       input.dataset.round = j.type === "prismatic" ? "0.0005" : "0.001";
       input.value = j.value;
       val.textContent = fmt(j.value, j.type);
