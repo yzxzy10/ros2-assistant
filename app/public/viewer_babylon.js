@@ -395,9 +395,18 @@
 
     function jointMatrix(j) {
       var v = (j.type === "fixed") ? 0 : (j.value || 0);
-      // p' = T + R_rpy * R_axis * p   =>   M = T * R_rpy * R_axis
       var M = mMul(mT(j.xyz[0], j.xyz[1], j.xyz[2]), mRpy(j.rpy || [0, 0, 0]));
-      if (j.type !== "fixed" && v) M = mMul(M, mAxis(j.axis || [0, 0, 1], v));
+      if (j.type === "fixed" || !v) return M;
+
+      var ax = j.axis || [0, 0, 1];
+      if (j.type === "prismatic") {
+        // 平动关节的值是「沿轴位移（米）」，不是角度。
+        // 之前一律套 mAxis() 做旋转，于是伸缩轴拖滑块只是原地微转、看着完全没动。
+        var n = Math.sqrt(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]) || 1;
+        M = mMul(M, mT(ax[0] / n * v, ax[1] / n * v, ax[2] / n * v));
+      } else {
+        M = mMul(M, mAxis(ax, v));      // revolute / continuous：绕轴转角
+      }
       return M;
     }
 
