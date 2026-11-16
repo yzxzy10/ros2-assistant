@@ -158,6 +158,31 @@ def _vis_sph(r_, x, y, z, mat):
             '    </visual>\n' % (x, y, z, r_, mat))
 
 
+# Gazebo 里的颜色要单独写：URDF 的 <material> 只管 RViz，
+# Gazebo 读的是 <gazebo reference><visual><material> 里的 ambient/diffuse。
+# 写法对齐 linorobot2 的 mech/base.urdf.xacro 与 mech/wheel.urdf.xacro。
+_RUBBER = (0.10, 0.10, 0.11)
+_CHASSIS = (0.16, 0.42, 0.68)
+
+
+def _gz_block(link, mu=None, rgb=None):
+    out = ['  <gazebo reference="%s">\n' % link]
+    if mu is not None:
+        out.append('    <mu1>%s</mu1>\n    <mu2>%s</mu2>\n' % (mu, mu))
+    if rgb is not None:
+        c = "%.4f %.4f %.4f 1.0" % rgb
+        out.append('    <visual>\n'
+                   '      <material>\n'
+                   '        <ambient>%s</ambient>\n'
+                   '        <diffuse>%s</diffuse>\n'
+                   '        <specular>0.1 0.1 0.1 1.0</specular>\n'
+                   '        <emissive>0.0 0.0 0.0 0.0</emissive>\n'
+                   '      </material>\n'
+                   '    </visual>\n' % (c, c))
+    out.append('  </gazebo>\n')
+    return "".join(out)
+
+
 # ---------- 轮子布局 ----------
 
 def wheel_plan(spec):
@@ -199,11 +224,10 @@ def wheel_plan(spec):
             names.append("rear_%s_wheel_joint" % side)
             items.append({"x": round(-half_wb, 4), "y": round(y, 4), "side": side})
 
-        refs = "".join(
-            '  <gazebo reference="%s"><mu1>1.2</mu1><mu2>1.2</mu2></gazebo>\n' % n
-            for n in ("front_left_wheel_link", "front_right_wheel_link",
-                      "rear_left_wheel_link", "rear_right_wheel_link"))
-        refs += '  <gazebo reference="base_link"><material>Gazebo/Blue</material></gazebo>\n'
+        refs = "".join(_gz_block(n, mu="1.2", rgb=_RUBBER)
+                       for n in ("front_left_wheel_link", "front_right_wheel_link",
+                                 "rear_left_wheel_link", "rear_right_wheel_link"))
+        refs += _gz_block("base_link", rgb=_CHASSIS)
         return {"xml": "".join(links), "drive": drive, "joints": names,
                 "refs": refs, "items": items}
 
@@ -232,18 +256,17 @@ def wheel_plan(spec):
                 "damping": "0.01"})
             names.append("front_%s_wheel_joint" % side)
             items.append({"x": round(ax + L * 0.30, 4), "y": round(y, 4), "side": side})
-        refs = "".join(
-            '  <gazebo reference="%s"><mu1>0.4</mu1><mu2>0.4</mu2></gazebo>\n' % n
-            for n in ("front_left_wheel_link", "front_right_wheel_link"))
+        refs = "".join(_gz_block(n, mu="0.4", rgb=_RUBBER)
+                       for n in ("front_left_wheel_link", "front_right_wheel_link"))
     else:
         links.append(_CASTER)
         items.append({"x": round(-L * 0.34, 4), "y": 0.0, "side": "caster"})
-        refs = '  <gazebo reference="caster_link"><mu1>0.05</mu1><mu2>0.05</mu2></gazebo>\n'
+        # 万向轮摩擦按 linorobot2 的 caster_wheel.urdf.xacro：0.01，能滑不卡
+        refs = _gz_block("caster_link", mu="0.01", rgb=_RUBBER)
 
     for side in ("left", "right"):
-        refs += ('  <gazebo reference="%s_wheel_link"><mu1>1.2</mu1><mu2>1.2</mu2></gazebo>\n'
-                 % side)
-    refs += '  <gazebo reference="base_link"><material>Gazebo/Blue</material></gazebo>\n'
+        refs += _gz_block("%s_wheel_link" % side, mu="1.2", rgb=_RUBBER)
+    refs += _gz_block("base_link", rgb=_CHASSIS)
     return {"xml": "".join(links), "drive": drive, "joints": names,
             "refs": refs, "items": items}
 

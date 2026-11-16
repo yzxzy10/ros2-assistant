@@ -421,6 +421,14 @@ def case_conventions():
         '            "/scan@sensor_msgs/msg/LaserScan]gz.msgs.LaserScan",\n', "")
     check(not sim_gate.check(sp, bad3)["passed"], "漏掉 /scan 桥接会被 G7 拦下")
 
+    # 对齐 linorobot2：Gazebo 里要单独写材质与摩擦力
+    check(u.count("<ambient>") >= 5, "Gazebo 材质块 %d 个（ambient/diffuse）" % u.count("<ambient>"))
+    check(u.count("<mu1>") >= 4, "轮子都设了摩擦系数 %d 个" % u.count("<mu1>"))
+    check(not sim_gate.check(sp, {k: (re.sub(r'<gazebo reference="rear_left_wheel_link">.*?</gazebo>', "",
+                                             v, flags=re.S) if k == "urdf/conv.urdf.xacro" else v)
+                                for k, v in f.items() if isinstance(v, str)})["passed"],
+          "漏掉轮子摩擦会被 G7 拦下")
+
     # link 子元素顺序：visual → collision → inertial
     first_link = re.search(r"<link name=\"base_link\">(.*?)</link>", u, re.S).group(1)
     order = [m.group(1) for m in re.finditer(r"<(visual|collision|inertial)[ >]", first_link)]

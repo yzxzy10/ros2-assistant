@@ -109,6 +109,24 @@ def check(urdf_text, launch_text="", pkg="", files=None):
             elif gz_type not in launch_text:
                 problems.append("桥接 %s 的 Gazebo 消息类型缺失（应为 %s）" % (topic, gz_type))
 
+    # 4.4 gazebo reference 必须指向真实 link；轮子必须有摩擦系数
+    link_names = set(el.get("name") for el in root.iter("link"))
+    checks += 1
+    for gz in root.iter("gazebo"):
+        ref = gz.get("reference")
+        if ref and ref not in link_names:
+            problems.append("gazebo reference「%s」没有对应的 link（Gazebo 里会静默忽略）" % ref)
+            break
+    for el in root.iter("link"):
+        name = el.get("name") or ""
+        if not name.endswith("_wheel_link"):
+            continue
+        checks += 1
+        block = [gz for gz in root.iter("gazebo") if gz.get("reference") == name]
+        if not block or block[0].find("mu1") is None:
+            problems.append("轮子 %s 没设 mu1/mu2，Gazebo 里会用默认摩擦，容易打滑" % name)
+            break
+
     # 4.5 mesh 引用必须真实存在（否则 Gazebo/RViz 报 "Unable to find file"）
     mesh_refs = re.findall(r'<mesh\s+filename="package://([^/"]+)/([^"]+)"', urdf_text)
     if mesh_refs:
