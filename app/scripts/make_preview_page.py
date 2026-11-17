@@ -28,17 +28,23 @@ TITLE = "仿真模型预览"
 
 
 def _mesh_stats(scene):
-    """统计网格件数与三角面（二进制 STL 每面 50 字节）。"""
-    n = tris = 0
+    """统计真正内联进来的网格件数与三角面（二进制 STL 每面 50 字节）。
+
+    只数带 bytes 的：URDF 声明了 mesh 但文件缺失时，前端会退回 3cm 占位方块，
+    把它算成「真实网格」会让页面标题撒谎（4 件真实网格 / 实际只有 3 件）。
+    """
+    n = tris = miss = 0
     for l in scene["links"]:
         for v in l["visuals"]:
             g = v["geometry"]
             if g.get("kind") != "mesh":
                 continue
-            n += 1
             if g.get("bytes"):
+                n += 1
                 tris += g["bytes"] // 50
-    return n, tris
+            else:
+                miss += 1
+    return n, tris, miss
 
 
 def _auto_bits(scene):
@@ -48,8 +54,10 @@ def _auto_bits(scene):
     steers = [n for n in joints if "steer_joint" in n]
     wheels = [n for n in names if n.endswith("wheel_link")]
     moving = [j for j in scene["joints"] if j["type"] in ("revolute", "prismatic")]
-    n_mesh, n_tri = _mesh_stats(scene)
+    n_mesh, n_tri, n_miss = _mesh_stats(scene)
     mesh_note = ("，%d 件真实网格共 %s 个三角面" % (n_mesh, format(n_tri, ","))) if n_mesh else ""
+    if n_miss:
+        mesh_note += "（另有 %d 件网格缺失，以占位方块代替）" % n_miss
 
     # 关节名不一定是 joint1 这种：真实 CAD 导出常见 1_JOINT / 2_JOINT。
     # 判据改成「有可动关节、又没有轮子」就是机械臂。
@@ -79,8 +87,8 @@ def build(urdf_path, out_path, pkg="", title="", pose=None, intro=""):
     # URDF 同级目录的上一层就是包根（urdf/ -> pkg/），有 meshes/ 就把网格一起内联
     pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(urdf_path)))
     if os.path.isdir(os.path.join(pkg_root, "meshes")):
-        # 独立页面是本地文件，不用受服务端 1.2MB 的流量约束；
-        # 真实 CAD 导出的网格动辄几 MB，按 24MB 放开
+        # 独立页面是本地文件，不用受服务端「单文件导入上限」的约束；
+        # 真实 CAD 导出的网格动辄几 MB，按 24MB 放开（与服务端 MESH_TOTAL_LIMIT 对齐）
         model_scene._attach_mesh_data(scene, pkg_root, limit=24 * 1024 * 1024)
 
     # 零位往往是一条直杆，看不出形态；演示页允许注入一个姿态
@@ -104,6 +112,10 @@ def build(urdf_path, out_path, pkg="", title="", pose=None, intro=""):
     css = open(os.path.join(APP, "public", "style.css"), encoding="utf-8").read()
     # 换引擎：内联 Babylon 查看器（三.js 版保留为 preview.js 以便回滚）
     pv = open(os.path.join(APP, "public", "viewer_babylon.js"), encoding="utf-8").read()
+    # Babylon 库本体也内联进来：CDN 上的未压缩版有 8.9MB，网慢时 15s+ 才加载完，
+    # 预览页长期白屏、自检误报 FAIL。内联后完全离线、双击即开，不依赖外网 CDN。
+    _bjs_path = os.path.join(APP, "public", "babylon.min.js")
+    bjs = open(_bjs_path, encoding="utf-8").read() if os.path.isfile(_bjs_path) else ""
 
     rows = []
     for j in scene["joints"]:
@@ -190,6 +202,7 @@ __ROWS__
   });
 </script>
 <script id="scene-data" type="application/json">__SCENE__</script>
+<script>__BABYLON__</script>
 <script>__PREVIEW__</script>
 <script>
   var SCENE = JSON.parse(document.getElementById("scene-data").textContent);
@@ -213,7 +226,7 @@ __ROWS__
       }
       poll(tries - 1);
     }, 700);
-  })(14);
+  })(30);
 </script>
 </body>
 </html>
@@ -223,6 +236,7 @@ __ROWS__
                 .replace("__CSS__", css)
                 .replace("__ROWS__", "\n".join(rows))
                 .replace("__SCENE__", json.dumps(scene, ensure_ascii=False))
+                .replace("__BABYLON__", bjs)
                 .replace("__PREVIEW__", pv)
                 .replace("__PKG__", pkg))
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)

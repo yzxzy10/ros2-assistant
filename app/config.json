@@ -66,12 +66,25 @@
   "ros": {
     "distro": "jazzy",
     "verify": {
-      "enabled": false,
+      "enabled": true,
       "backend": "auto",
+      "fallback_mock": false,
       "image": "",
+      "memory": "6g",
+      "cpus": "3",
+      "build_jobs": "1",
+      "pkg_jobs": "1",
       "timeout_build_sec": 300,
       "timeout_run_sec": 25,
-      "fix_rounds": 1
+      "fix_rounds": 1,
+      "extra_apt": ""
+    },
+    "chain_verify": {
+      "hop_timeout_sec": 12,
+      "boot_wait_sec": 8,
+      "build_timeout_sec": 3600,
+      "total_timeout_sec": 120,
+      "inject_rate": 5
     }
   },
   "multimodal": {

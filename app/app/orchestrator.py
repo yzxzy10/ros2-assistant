@@ -27,8 +27,7 @@ from .prompts import (MASTER_PERSONA, SYS_MASTER_ERROR, SYS_MASTER_CONCEPT,
                       SYS_MASTER_EXERCISE, SYS_MASTER_CHAT, SYS_MASTER_FAQ,
                       DIRECT_GUARD, SYS_SUMMARY, VISION_FALLBACK_NOTE,
                       versioned)
-from . import wf_need, wf_plan, wf_code, wf_sim
-from . import model_inspect
+from . import wf_need, wf_plan, wf_code, wf_sim, model_inspect
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -119,6 +118,45 @@ def list_user_sessions(uid, limit=20):
         })
     out.sort(key=lambda x: x.get("updated") or 0, reverse=True)
     return out[:limit]
+
+
+def reassign(old_uid, new_uid):
+    """把 old_uid 名下的会话改归 new_uid（注册时继承这台设备上已有的对话）。
+
+    只动 state.json 里的 user_id，不重建目录：会话目录名是 sid，
+    与归属无关，所以不需要搬文件，也不会影响正在打开的会话。
+    """
+    if not old_uid or not new_uid or old_uid == new_uid:
+        return 0
+    root = sess_dir()
+    if not os.path.isdir(root):
+        return 0
+    moved = 0
+    for name in os.listdir(root):
+        if not _SAFE_SID.match(name):
+            continue
+        sf = os.path.join(root, name, "state.json")
+        if not os.path.isfile(sf):
+            continue
+        try:
+            with open(sf, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        if data.get("user_id") != old_uid:
+            continue
+        data["user_id"] = new_uid
+        try:
+            with open(sf, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            moved += 1
+        except OSError:
+            continue
+    try:
+        store.reassign(old_uid, new_uid)
+    except Exception:      # noqa: BLE001
+        pass
+    return moved
 
 
 def _title_from(data):
@@ -279,6 +317,15 @@ class Session(object):
         body = code if code.lstrip().startswith("# file:") else first + "\n" + code
         with open(path, "w", encoding="utf-8") as f:
             f.write(body)
+        # 光把 .py 扔进 src/ 是不构成包的：colcon 只认 package.xml，缺了它编译阶段
+        # 一个包都认不出来（build 日志里 0 个包），install/ 里没有，ros2 run 立刻报
+        # `Package '<pkg>' not found` —— 用户看到的就是「写完节点、一运行就编译报错」。
+        # 所以每写一个文件都把壳补齐（幂等，只补缺的，不覆盖用户的 setup.py）。
+        try:
+            from . import pkg_scaffold
+            pkg_scaffold.ensure(self.ws_root(), pkg)
+        except Exception:                       # noqa: BLE001
+            pass                                # 补壳失败不该让代码保存不了
         return path
 
     def save_files(self, files, pkg):
@@ -1028,9 +1075,7 @@ def _is_option_reply(msg):
     if not t:
         return False
     upper = t.upper()[:1]
-    if upper in ("A", "B", "C", "D", "E") and len(t) <= 2:
-        return True
-    if re.search(r"生成.{0,6}(仿真)?模型|要模型|加.{0,4}模型|仿真模型", t):
+    if upper in ("A", "B", "C", "D") and len(t) <= 2:
         return True
     # 明确动作词（这些词即使出现在长句里也基本指向选项动作，相对安全）
     if re.search(r"修改|改一下|要改|调整|生成.{0,20}代码|节点.{0,10}代码|"
@@ -1109,12 +1154,6 @@ def _handle_options(cfg, sess, msg, stages):
         return _gen_single_node(cfg, sess, _spec_json(node), node["node_name"], expected_name=node.get("node_name"))
     if upper == "D" or re.search(r"全部生成|所有.{0,6}生成|全都生成", t):
         return _gen_batch(cfg, sess, stages)
-    if upper == "E" or re.search(r"生成.{0,6}(仿真)?模型|要模型|仿真模型", t):
-        sess.pending = None
-        sess.save()
-        brief = (sess.requirement_desc or "") + \
-            "\n（只要 Gazebo 仿真模型与配套接线，不需要业务节点代码）"
-        return _sim_flow(cfg, sess, brief)
     # 不认识的回复 → 重新给选项
     return _reply("请回复选项字母（A/B/C/D），或直接说你的想法～",
                   options=OPT_ABCD, options_mode="abcd", stages=stages, sess=sess)
@@ -1153,9 +1192,8 @@ def _gen_batch(cfg, sess, stages=None):
     sess.save()
     return _mark_graph_ready(
         _reply("\n\n---\n\n".join(parts) +
-               "\n\n全部节点生成完毕🎉 点下面的按钮把整个工作区打包带走。",
-               options=[{"key": "1", "label": "下载整包 zip", "action": "zip"}],
-               options_mode="model", stages=stages, sess=sess), sess)
+               "\n\n全部节点生成完毕🎉 可到右侧「项目文件」下载整个工作区。",
+               stages=stages, sess=sess), sess)
 
 
 def _expand_choice(sess, msg):
@@ -1187,31 +1225,17 @@ def handle(cfg, sid, message, user_id=None, images=None):
             res["agents"] = agents.trace()
             res["agent_chain"] = agents.handoff_line()
         if isinstance(res, dict) and res.get("reply"):
-            # 记下这条回复生成了哪个模型，回放时才能把三维预览重新挂上
-            extra = None
-            sim = res.get("sim")
-            if isinstance(sim, dict) and sim.get("package"):
-                extra = {"sim": {"package": sim["package"],
-                                 "archetype": sim.get("archetype", "")}}
-            elif res.get("model_preview"):
-                extra = {"sim": {"package": "", "archetype": ""}}
-            _record_transcript(sess, res.get("reply"), "assistant", extra=extra)
+            _record_transcript(sess, res.get("reply"), "assistant")
         return res
 
 
-def _record_transcript(sess, content, role, extra=None):
-    """把一句话追加进回放消息流（transcript），并控制长度。
-
-    extra 用来存「这条回复带什么模型」之类的元信息，回放时前端据此重挂三维预览。
-    """
+def _record_transcript(sess, content, role):
+    """把一句话追加进回放消息流（transcript），并控制长度。"""
     text = (content or "").strip()
     if not text:
         return
     try:
-        item = {"role": role, "content": text}
-        if isinstance(extra, dict):
-            item.update(extra)
-        sess.transcript.append(item)
+        sess.transcript.append({"role": role, "content": text})
         if len(sess.transcript) > 200:
             sess.transcript = sess.transcript[-200:]
         sess.save()
@@ -1403,6 +1427,7 @@ def _handle_locked(cfg, sess, message, images=None):
     # 4. 直接回答
     kind = _classify_direct(msg)
     return _direct_answer(cfg, sess, msg, kind, [agents.name_of("answerer")])
+
 
 _GEN_PKG = re.compile(r"已生成\s*`([A-Za-z0-9_]{1,64})`")
 

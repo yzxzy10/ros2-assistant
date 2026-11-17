@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import threading
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KB_DIR = os.path.join(_ROOT, "kb_data")
@@ -160,10 +161,15 @@ class Retriever:
 
 
 _RETR = None
+_LOCK = threading.Lock()
 
 
 def get_retriever():
+    """单例。加锁是因为服务现在先响端口、知识库放后台线程加载：
+    后台还在建索引时来了第一个请求，不加锁就会各建一份，白吃一份内存。"""
     global _RETR
     if _RETR is None:
-        _RETR = Retriever()
+        with _LOCK:
+            if _RETR is None:
+                _RETR = Retriever()
     return _RETR

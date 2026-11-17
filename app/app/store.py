@@ -380,3 +380,53 @@ def delete(user_id):
             c.commit()
         finally:
             c.close()
+
+def reassign(old_id, new_id, merge=True):
+    """把画像从 old_id 迁到 new_id（注册时把匿名身份的数据带进账号）。
+
+    目标已存在时按「合并」处理：轮次相加、列表去重并集、摘要取较长的、
+    等级取更高的。返回是否发生了迁移。
+    """
+    if not old_id or not new_id or old_id == new_id:
+        return False
+    with _LOCK:
+        c = _conn()
+        try:
+            src = c.execute("SELECT * FROM profiles WHERE user_id=?", (old_id,)).fetchone()
+            if src is None:
+                return False
+            dst = c.execute("SELECT * FROM profiles WHERE user_id=?", (new_id,)).fetchone()
+            if dst is None or not merge:
+                c.execute("UPDATE profiles SET user_id=?, updated_at=? WHERE user_id=?",
+                          (new_id, _now(), old_id))
+                c.commit()
+                return True
+
+            def union(a, b):
+                out = []
+                for item in (_loads(a, []) + _loads(b, [])):
+                    key = json.dumps(item, ensure_ascii=False, sort_keys=True)
+                    if all(json.dumps(x, ensure_ascii=False, sort_keys=True) != key
+                           for x in out):
+                        out.append(item)
+                return out
+
+            order = {"beginner": 0, "middle": 1, "advanced": 2}
+            level = dst["level"] if order.get(dst["level"], 0) >= order.get(src["level"], 0) \
+                else src["level"]
+            summary = dst["summary"] if len(dst["summary"] or "") >= len(src["summary"] or "") \
+                else src["summary"]
+            c.execute(
+                "UPDATE profiles SET level=?, turns=?, concepts=?, projects=?, errors=?,"
+                " summary=?, summary_turns=?, updated_at=? WHERE user_id=?",
+                (level, int(dst["turns"] or 0) + int(src["turns"] or 0),
+                 json.dumps(union(dst["concepts"], src["concepts"]), ensure_ascii=False),
+                 json.dumps(union(dst["projects"], src["projects"]), ensure_ascii=False),
+                 json.dumps(union(dst["errors"], src["errors"]), ensure_ascii=False),
+                 summary, max(int(dst["summary_turns"] or 0), int(src["summary_turns"] or 0)),
+                 _now(), new_id))
+            c.execute("DELETE FROM profiles WHERE user_id=?", (old_id,))
+            c.commit()
+            return True
+        finally:
+            c.close()

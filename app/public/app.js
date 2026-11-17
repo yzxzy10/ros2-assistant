@@ -95,10 +95,14 @@
 
   function handleAuthError(e) {
     if (e && e.needToken) { showGate(e.message); return true; }
-    // 403 但服务端没说要令牌：是「这段会话不属于当前身份」（常见于重新部署后身份被重置），
-    // 输令牌解决不了，直接丢掉旧会话号并重载，用户无感换到新会话。
+    // 403 但服务端没说要令牌：会话不属于当前身份（严格模式下访问了别人的会话，
+    // 或应用刚更新、身份被重发）。输令牌解决不了，只能换新会话。用一个
+    // sessionStorage 标记把原因带过 reload，重载后明确告诉用户，别让人以为数据凭空丢了。
     if (e && e.status === 403) {
-      try { localStorage.removeItem("ros2tutor_sid"); } catch (_) {}
+      try {
+        localStorage.removeItem("ros2tutor_sid");
+        sessionStorage.setItem("ros2tutor_reset", e.message || "会话归属失效");
+      } catch (_) {}
       location.reload();
       return true;
     }
@@ -676,8 +680,27 @@
 
   // ---------------- 项目导入（识别 ROS2 项目并作为后续开发上下文） ----------------
   var projectInput = $("project-file");
-  var PROJECT_ALLOWED = /\.(py|xml|yaml|yml|txt|md|launch|msg|srv|action|cfg|json|cpp|hpp|h|c|cc|urdf|xacro|sdf|world|rviz|cmake|ini|toml|sh|bash|csv|zip|tar|gz|bz2|xz|zst|tgz|tbz2|txz|7z|rar|so|a|o|bin|run|exe|appimage)$/i;
-  var PROJECT_BINARY = /\.(zip|tar|gz|bz2|xz|zst|tgz|tbz2|txz|7z|rar|so|a|o|bin|run|exe|appimage)$/i;
+  var PROJECT_ALLOWED = /\.(py|xml|yaml|yml|txt|md|launch|msg|srv|action|cfg|json|cpp|hpp|h|c|cc|urdf|xacro|sdf|world|rviz|cmake|ini|toml|sh|bash|csv|dae|stl|obj|zip|tar|gz|bz2|xz|zst|tgz|tbz2|txz|7z|rar|so|a|o|bin|run|exe|appimage)$/i;
+  var PROJECT_BINARY = /\.(zip|tar|gz|bz2|xz|zst|tgz|tbz2|txz|7z|rar|so|a|o|bin|run|exe|appimage|stl)$/i;
+  var importing = false;   // 项目导入（分片上传）进行中，用于阻止切换/离开中断上传
+  // 无扩展名但必须导入的文件。ament_python 包的身份证是 `resource/<包名>`
+  // （空文件），漏了它 colcon 打包阶段直接报
+  //   can't copy '.../resource/<包名>': doesn't exist or not a regular file
+  // 整包编译失败——用户看到的是「我的包编译不通过」，其实是导入时被过滤掉了。
+  // 规则必须与后端 project_import._keep 一致：两边各有一道过滤，只补一边没用。
+  function projectKeep(rel) {
+    rel = String(rel || "");
+    if (!rel) return false;
+    if (PROJECT_ALLOWED.test(rel)) return true;
+    var seg = rel.split("/");
+    var base = seg[seg.length - 1];
+    var upper = base.toUpperCase();
+    if (upper === "COLCON_IGNORE" || upper === "AMENT_IGNORE") return true;
+    if (/\.[^./]+$/.test(base)) return false;        // 有扩展名却不在白名单
+    var dirs = seg.slice(0, -1);
+    // resource/ 下的标记文件、scripts/ 下的无后缀脚本（很多 ROS1 迁过来的项目）
+    return dirs.indexOf("resource") >= 0 || dirs.indexOf("scripts") >= 0;
+  }
   function readProjectFile(f) {
     return new Promise(function (resolve) {
       var isBin = PROJECT_BINARY.test(f._rel);
@@ -696,6 +719,167 @@
   function importProject(files) {
     var list = Array.prototype.slice.call(files || []);
     if (!list.length) return;
+    // 导入成功/失败的统一收尾（三条导入路径共用）
+    function importDone(d) {
+      importing = false;
+      if (!d.ok) throw new Error(d.message || "导入失败");
+      addMsg("assistant", md("✅ " + (d.message || "项目导入成功")));
+      // 导入即体检：模型结构 + 控制层，修复结果已经在服务端落盘
+      if (d.inspect && d.inspect.markdown) {
+        addMsg("assistant", md(d.inspect.markdown));
+        if (d.inspect.options && d.inspect.options.length) {
+          renderOptions(d.inspect.options, "model");
+        }
+      } else if (d.inspect && d.inspect.error) {
+        addMsg("assistant", md("⚠️ " + d.inspect.error));
+      }
+      // 导入的包里识别到 URDF/SDF 模型：直接在对话里挂一块 3D 预览，
+      // 不用等出架构图就能看见模型形状。带包名锁定，避免多套模型时画错。
+      if (d.model_preview && window.RTPreview) {
+        var pvBubble = addMsg("assistant", md("**模型预览** · 已从导入的包中识别到模型文件"));
+        if (pvBubble) {
+          var pvSlot = document.createElement("div");
+          pvSlot.className = "pv-slot";
+          pvBubble.appendChild(pvSlot);
+          window.RTPreview.mount(pvSlot, sid, d.model_package || "");
+        }
+      }
+      refreshSession();
+      refreshProfile();
+      if (window.RTGraph) window.RTGraph.reload();   // 导入完立刻出图
+    }
+    function importFail(e) {
+      importing = false;
+      if (!handleAuthError(e)) {
+        addMsg("assistant", md("⚠️ 项目导入失败：" + (e.message || e)));
+      }
+    }
+    // 大 zip 分片上传：线上网关对单请求 body 有 ~50MB 硬上限，178MB 的 autoware
+    // 一次发不上去，切成小片逐片发，最后一片触发服务端拼接导入。
+    // 分片从 32MB 降到 8MB：一片 32MB 在普通家宽上传要几十秒，界面只在「整片传完」
+    // 才动一次进度，看起来跟卡死一样；片小一点进度条动得起来，重试代价也小。
+    var ZIP_SINGLE_MAX = 40 * 1024 * 1024;   // 单请求直传上限（< 网关 ~50MB）
+    var ZIP_CHUNK = 8 * 1024 * 1024;         // 分片大小
+    var CHUNK_STALL_MS = 20000;              // 这么久没有任何字节传出去 = 卡住了
+    var CHUNK_TRIES = 3;
+
+    // 带进度的上传：fetch 没有上传进度事件，只能用 XHR。每次有字节走掉就重置
+    // 看门狗，长时间没动静主动 abort，别让用户对着 0% 干等。
+    function postChunk(url, blob, onProgress) {
+      return new Promise(function (resolve, reject) {
+        var xhr = new XMLHttpRequest();
+        var watchdog = 0;
+        var ended = false;
+        function done(fn, arg) {
+          if (ended) return;
+          ended = true;
+          if (watchdog) { clearTimeout(watchdog); watchdog = 0; }
+          fn(arg);
+        }
+        function arm() {
+          if (watchdog) clearTimeout(watchdog);
+          watchdog = setTimeout(function () {
+            try { xhr.abort(); } catch (e) {}
+            done(reject, new Error("上传卡住了（" + Math.round(CHUNK_STALL_MS / 1000) +
+              " 秒没有任何进展）"));
+          }, CHUNK_STALL_MS);
+        }
+        xhr.open("POST", url, true);
+        xhr.withCredentials = true;
+        if (token) xhr.setRequestHeader("X-Auth-Token", token);
+        xhr.upload.onprogress = function (ev) {
+          if (ev.lengthComputable && onProgress) onProgress(ev.loaded, ev.total);
+          arm();
+        };
+        // 字节发完到服务端回包之间，服务端可能正在解压/解析（大项目十几秒很正常），
+        // 这段时间没有任何上传事件，不能让 20 秒的看门狗把它误杀，换成回包超时。
+        xhr.upload.onload = function () {
+          if (watchdog) { clearTimeout(watchdog); watchdog = 0; }
+          watchdog = setTimeout(function () {
+            try { xhr.abort(); } catch (e) {}
+            done(reject, new Error("服务端处理超时（已收到全部数据，3 分钟没有回包）"));
+          }, 180000);
+        };
+        xhr.onload = function () {
+          var d = {};
+          try { d = JSON.parse(xhr.responseText || "{}"); } catch (e) { d = {}; }
+          done(resolve, { status: xhr.status, data: d });
+        };
+        xhr.onerror = function () { done(reject, new Error("网络中断")); };
+        xhr.onabort = function () { done(reject, new Error("上传被中断")); };
+        arm();
+        xhr.send(blob);
+      });
+    }
+
+    function importZipChunked(file) {
+      var upSid = sid;                // 上传期间固定会话 id：中途切会话也不污染分片
+      var totalChunks = Math.ceil(file.size / ZIP_CHUNK);
+      var i = 0;
+      var fname = file._rel || file.name || "项目";
+      var mb = function (n) { return (n / 1048576).toFixed(1); };
+      var prog = addMsg("assistant", md("正在上传 " + fname + "（共 " + mb(file.size) + " MB）…"));
+      function paint(text) { if (prog) prog.innerHTML = md(text); }
+
+      function sendChunk() {
+        var start = i * ZIP_CHUNK;
+        var blob = file.slice(start, Math.min(start + ZIP_CHUNK, file.size));
+        var isLast = (i === totalChunks - 1);
+        var q = "?sessionId=" + encodeURIComponent(upSid)
+              + "&name=" + encodeURIComponent(fname)
+              + "&index=" + i + "&total=" + totalChunks + (isLast ? "&final=1" : "");
+        var url = "/api/project/import-chunk" + q;
+        var base = i * ZIP_CHUNK;
+        var attempt = 0;
+        function once() {
+          attempt += 1;
+          var sent = 0;
+          var lastPaint = 0;
+          return postChunk(url, blob, function (loaded) {
+            sent = loaded;
+            var now = Date.now();
+            if (now - lastPaint < 120) return;
+            lastPaint = now;
+            var overall = Math.min(base + loaded, file.size);
+            paint("正在上传 " + fname + "：" + mb(overall) + " / " + mb(file.size) + " MB（" +
+              Math.round(overall / file.size * 100) + "%）· 第 " + (i + 1) + "/" +
+              totalChunks + " 片");
+          }).then(function (r) {
+            var d = r.data || {};
+            if (r.status === 401 || r.status === 403) {
+              if (d.need_identity) throw new Error("__identity__");
+            }
+            if (r.status >= 400 || d.error) {
+              throw new Error(d.message || d.error || ("HTTP " + r.status));
+            }
+            return d;
+          }).catch(function (e) {
+            var needId = (e && e.message === "__identity__");
+            if (attempt >= CHUNK_TRIES && !needId) throw e;
+            paint("上传第 " + (i + 1) + " 片没成功（" + (e.message || e) + "），正在重试 " +
+              attempt + "/" + (CHUNK_TRIES - 1) + "…");
+            var wait = needId ? ensureIdentity(true)
+                              : new Promise(function (res) { setTimeout(res, 1200 * attempt); });
+            return wait.then(once);
+          });
+        }
+        return once().then(function (d) {
+          if (!d.ok) throw new Error(d.message || "导入失败");
+          i += 1;
+          if (i >= totalChunks) {
+            paint("已上传 " + mb(file.size) + " MB，正在解析项目结构…");
+          } else {
+            var nextOverall = Math.min(i * ZIP_CHUNK, file.size);
+            paint("正在上传 " + fname + "：" + mb(nextOverall) + " / " + mb(file.size) +
+              " MB（" + Math.round(nextOverall / file.size * 100) + "%）· 第 " + (i + 1) +
+              "/" + totalChunks + " 片");
+            return sendChunk();
+          }
+          return d;
+        });
+      }
+      return sendChunk().then(importDone).catch(importFail);
+    }
     // 一个会话只有一个工作区：再次导入是**覆盖**，不是追加。
     // 覆盖会 rmtree 旧目录，不可恢复，所以先问一句。
     var badge = $("imported-badge");
@@ -709,13 +893,17 @@
       var seg = rel.split("/");
       if (seg.length > 1) seg.shift();     // 去掉选中的顶层文件夹名
       rel = seg.join("/");
-      if (!rel || !PROJECT_ALLOWED.test(rel)) return;
-      // 源码单文件限 1MB；压缩包不能套这个限制（真实项目 zip 常有几 MB），
-      // 否则选了 zip 会被静默跳过，用户只会看到「没反应」。总量仍限 100MB。
+      if (!rel || !projectKeep(rel)) return;
+      // 源码单文件限 2MB；压缩包不能套这个限制（真实项目 zip 常有几十上百 MB）。
+      // 压缩包大小不代表里面源码大小，交给后端展开后「只收源码」再算大小；
+      // 单个包给 300MB 兜底防病态文件。
       var isArchive = /\.(zip|tar|gz|tgz|bz2|xz|zst|7z|rar)$/i.test(rel);
-      if (!isArchive && f.size > 1 * 1024 * 1024) return;
-      total += f.size;
-      if (total > 100 * 1024 * 1024) return;         // 总量 ≤ 100MB
+      if (!isArchive && f.size > 2 * 1024 * 1024) return;
+      if (isArchive && f.size > 300 * 1024 * 1024) return;
+      if (!isArchive) {
+        total += f.size;
+        if (total > 300 * 1024 * 1024) return;       // 散文件总量 ≤ 300MB
+      }
       f._rel = rel;
       items.push(f);
     });
@@ -723,7 +911,23 @@
       addMsg("assistant", md("⚠️ 未找到可导入的文件（支持 .py/.xml/.yaml/.msg/.cpp 源码，以及 .zip/.tar/.so/.bin 等压缩包与可执行文件）。"));
       return;
     }
+    importing = true;                 // 进入导入状态：期间禁止切会话/开新对话，离开要警告
     addMsg("assistant", md("正在导入项目并识别结构（共 " + items.length + " 个文件）…"));
+    // 单个 zip 走二进制直传：大 zip base64 后膨胀 4/3 再塞进 JSON，单请求轻松 200MB+，
+    // 容易在网络/网关层被掐断。直接把 File 对象当 body，浏览器按二进制发。
+    var singleZip = items.length === 1 && /\.zip$/i.test(items[0]._rel);
+    if (singleZip) {
+      var zf = items[0];
+      if (zf.size > ZIP_SINGLE_MAX) {
+        return importZipChunked(zf);   // 大 zip：分片上传
+      }
+      return apiFetch("/api/project/import-zip?sessionId=" + encodeURIComponent(sid)
+          + "&name=" + encodeURIComponent(zf._rel), {
+        method: "POST",
+        body: zf
+      }).then(function (r) { return r.json(); })
+        .then(importDone).catch(importFail);
+    }
     Promise.all(items.map(readProjectFile)).then(function (results) {
       var arr = results.filter(function (r) { return r; })
                        .map(function (r) { return { path: r.path, content: r.content }; });
@@ -732,26 +936,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: sid, files: arr })
       }).then(function (r) { return r.json(); });
-    }).then(function (d) {
-      if (!d.ok) throw new Error(d.message || "导入失败");
-      addMsg("assistant", md("✅ " + (d.message || "项目导入成功")));
-      // 导入即体检：模型结构 + 控制层，修复结果已经在服务端落盘
-      if (d.inspect && d.inspect.markdown) {
-        addMsg("assistant", md(d.inspect.markdown));
-        if (d.inspect.options && d.inspect.options.length) {
-          renderOptions(d.inspect.options, "model");
-        }
-      } else if (d.inspect && d.inspect.error) {
-        addMsg("assistant", md("⚠️ " + d.inspect.error));
-      }
-      refreshSession();
-      refreshProfile();
-      if (window.RTGraph) window.RTGraph.reload();   // 导入完立刻出图
-    }).catch(function (e) {
-      if (!handleAuthError(e)) {
-        addMsg("assistant", md("⚠️ 项目导入失败：" + (e.message || e)));
-      }
-    });
+    }).then(importDone).catch(importFail);
   }
   // 导入入口做成二选一：文件夹 / zip。
   // 原来点一下只能选目录（input 带 webkitdirectory），浏览框里 zip 是灰的，选不了。
@@ -815,6 +1000,9 @@
         btn.disabled = false;
         btn.innerHTML = REMOVE_LABEL;
         if (!d.ok) throw new Error(d.message || "移除失败");
+        // 项目没了，「移除/下载」就不该还挂在那儿：这两个按钮只对现存项目有意义。
+        // hasGraphArtifact 只在 renderSidebar 里算，移除走的是这条快路径，必须自己清。
+        hasGraphArtifact = false;
         renderFiles([]);
         renderImportedBadge(null);
         addMsg("assistant", md("🗑️ " + (d.message || "已移除项目") +
@@ -1226,13 +1414,19 @@
   function switchSession(targetSid) {
     if (!targetSid || targetSid === sid) return;
     if (sending) { alert("当前消息还在生成中，稍候再切换"); return; }
+    if (importing) { alert("项目正在导入中，切换会中断上传，请稍候再切"); return; }
+    // 先退出当前会话的「编译运行」验证：诊断条/日志框/编译输出是画在当前图上的，
+    // 不退出就会残留，切来切去时多个会话的报错会叠加成一坨。
+    if (window.RTGraph && window.RTGraph.verifyExit) window.RTGraph.verifyExit();
     sid = targetSid;
     localStorage.setItem("ros2tutor_sid", sid);
     loadCurrentSession().then(renderHistoryList);
+    if (window.RTGraph) window.RTGraph.reload();   // 切会话必须同步刷新架构图
   }
 
   $("new-chat").onclick = function () {
     if (sending) { alert("当前消息还在生成中，稍候再开新对话"); return; }
+    if (importing) { alert("项目正在导入中，离开会中断上传，请稍候再开"); return; }
     var nsid = "s" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     localStorage.setItem("ros2tutor_sid", nsid);
     location.reload();          // uid 不变，学习画像与历史会话照旧带过来
@@ -1367,6 +1561,15 @@
   }
 
   function boot() {
+    // 上次因为 403 被切到新会话：把原因说清楚，别让用户对着「新对话」发懵。
+    var reset = "";
+    try { reset = sessionStorage.getItem("ros2tutor_reset") || ""; } catch (e) {}
+    if (reset) {
+      try { sessionStorage.removeItem("ros2tutor_reset"); } catch (e) {}
+      addMsg("assistant", md("⚠️ 之前那段对话因为「" + reset +
+        "」已无法继续访问，已为你开了一段新对话。\n\n" +
+        "如果你刚才在导入项目，请再导入一次；聊天和项目文件只存在于之前的会话里，这里看不到了。"));
+    }
     ensureIdentity().then(function () {
       checkHealth();
       loadCurrentSession();
@@ -1389,6 +1592,154 @@
       addMsg("assistant", md((kind === "error" ? "⚠️ " : "") + text));
     }
   };
+
+
+  // ---------- 账号：登录 / 注册 ----------
+  // 数据归属：服务端把 uid 换成账号 uid 后，会话与画像都挂在这个 uid 下，
+  // 所以换电脑 / 换浏览器 / 清缓存都不影响；与 IP 完全无关。
+  var authMode = "login";
+  function authEl(id) { return document.getElementById(id); }
+
+  function renderAuth(d) {
+    var logged = !!(d && d.loggedIn);
+    var box = authEl("account-box");
+    if (box) box.className = "account" + (logged ? " on" : "");
+    var av = authEl("account-avatar");
+    if (av) av.textContent = logged ? String(d.username || "?").slice(0, 1).toUpperCase() : "?";
+    var nm = authEl("account-name");
+    if (nm) nm.textContent = logged ? d.username : "未登录";
+    var sb = authEl("account-sub");
+    if (sb) sb.textContent = logged ? "已登录 · 记录跟着账号走" : "登录 / 注册";
+    var out = authEl("account-logout");
+    if (out) out.classList.toggle("hidden", !logged);
+  }
+
+  function refreshAuth() {
+    return fetch("/api/auth/me", { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(renderAuth)
+      .catch(function () { /* 未登录或网络异常都不影响主流程 */ });
+  }
+
+  function authMsg(text, ok) {
+    var el = authEl("auth-msg");
+    if (!el) return;
+    el.textContent = text || "";
+    el.className = "auth-msg" + (ok ? " ok" : "");
+  }
+
+  function setAuthMode(mode) {
+    authMode = mode === "register" ? "register" : "login";
+    document.querySelectorAll(".auth-tab").forEach(function (b) {
+      b.classList.toggle("on", b.getAttribute("data-mode") === authMode);
+    });
+    var t = authEl("auth-title");
+    if (t) t.textContent = authMode === "register" ? "注册新账号" : "登录账号";
+    var btn = authEl("auth-submit");
+    if (btn) btn.textContent = authMode === "register" ? "注册并登录" : "登录";
+    var pw = authEl("auth-pass");
+    if (pw) {
+      pw.setAttribute("autocomplete", authMode === "register" ? "new-password" : "current-password");
+      if (authMode === "register") pw.setAttribute("placeholder", "至少 6 位");
+      else pw.setAttribute("placeholder", "输入密码");
+    }
+    authMsg("");
+  }
+
+  function openAuth(mode) {
+    setAuthMode(mode);
+    var mask = authEl("auth-mask");
+    if (mask) mask.classList.remove("hidden");
+    setTimeout(function () {
+      var u = authEl("auth-user");
+      if (u) u.focus();
+    }, 40);
+  }
+
+  function closeAuth() {
+    var mask = authEl("auth-mask");
+    if (mask) mask.classList.add("hidden");
+  }
+
+  function submitAuth() {
+    var userEl = authEl("auth-user"), passEl = authEl("auth-pass");
+    var user = (userEl && userEl.value || "").trim();
+    var pass = (passEl && passEl.value) || "";
+    if (!user || !pass) { authMsg("请填写用户名和密码"); return; }
+    var btn = authEl("auth-submit");
+    if (btn) btn.disabled = true;
+    authMsg(authMode === "register" ? "正在创建账号…" : "正在登录…", true);
+    fetch("/api/auth/" + authMode, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: user, password: pass })
+    }).then(function (r) {
+      return r.json().then(function (d) { return { ok: r.ok, d: d || {} }; });
+    }).then(function (res) {
+      if (btn) btn.disabled = false;
+      if (!res.ok || !res.d.ok) {
+        authMsg(res.d.message || "操作失败，请稍后再试");
+        return;
+      }
+      authMsg(authMode === "register" ? "注册成功，正在载入你的记录…" : "登录成功，正在载入…", true);
+      // 身份 Cookie 变了，整页重载最稳：会话列表、画像、当前会话归属都会按新 uid 重新取
+      setTimeout(function () { location.reload(); }, 420);
+    }).catch(function () {
+      if (btn) btn.disabled = false;
+      authMsg("网络异常，请稍后再试");
+    });
+  }
+
+  function logoutAuth() {
+    fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" })
+      .catch(function () { /* 失败也照样重载，重新取身份 */ })
+      .then(function () {
+        try { localStorage.removeItem("ros2tutor_uid"); } catch (e) {}
+        location.reload();
+      });
+  }
+
+  function initAuth() {
+    var open = authEl("account-open"), openTop = authEl("account-open-top");
+    if (open) open.onclick = function () { openAuth("login"); };
+    if (openTop) openTop.onclick = function () { openAuth("login"); };
+    var out = authEl("account-logout");
+    if (out) out.onclick = logoutAuth;
+    var close = authEl("auth-close");
+    if (close) close.onclick = closeAuth;
+    var submit = authEl("auth-submit");
+    if (submit) submit.onclick = submitAuth;
+    var mask = authEl("auth-mask");
+    if (mask) mask.addEventListener("click", function (e) { if (e.target === mask) closeAuth(); });
+    document.querySelectorAll(".auth-tab").forEach(function (b) {
+      b.onclick = function () { setAuthMode(b.getAttribute("data-mode")); };
+    });
+    ["auth-user", "auth-pass"].forEach(function (id) {
+      var el = authEl(id);
+      if (el) el.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") { e.preventDefault(); submitAuth(); }
+        if (e.key === "Escape") closeAuth();
+      });
+    });
+    refreshAuth();
+  }
+
+  // 弹层写在 body 末尾（在脚本之后），直接在这里绑定会拿到 null；
+  // 等 DOM 就绪再绑，顺序怎么改都不会失效
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initAuth);
+  } else {
+    initAuth();
+  }
+
+  // 项目还在导入（分片上传）时离开页面会中断上传，用浏览器原生提示拦一下。
+  window.addEventListener("beforeunload", function (e) {
+    if (!importing) return;
+    e.preventDefault();
+    e.returnValue = "项目还在导入中，离开会中断上传。确定离开吗？";
+    return e.returnValue;
+  });
 
   initTheme();
   initDrawer();

@@ -187,6 +187,7 @@ source /opt/ros/{distro}/setup.bash || {{ echo "__ENV_FAIL__"; exit 3; }}
 cd /ws || exit 3
 
 echo "__STAGE__ build"
+command -v colcon >/dev/null 2>&1 || {{ echo "__ENV_MISSING__|colcon"; exit 4; }}
 colcon build --symlink-install --packages-select {pkg} 2>&1 | tail -n 80
 if [ "${{PIPESTATUS[0]}}" -ne 0 ]; then echo "__BUILD_FAIL__"; exit 2; fi
 echo "__BUILD_OK__"
@@ -330,7 +331,6 @@ def verify(cfg, code, spec):
                    "--cap-drop", "ALL",
                    "--security-opt", "no-new-privileges",
                    "--memory", "1g", "--cpus", "1", "--pids-limit", "256",
-                   "-e", "ROS_LOCALHOST_ONLY=1",
                    "-e", "ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST",
                    "-v", "%s:/ws" % ws, "-w", "/ws",
                    image, "bash", "/ws/run_verify.sh"]

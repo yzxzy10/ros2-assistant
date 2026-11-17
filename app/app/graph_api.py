@@ -182,6 +182,8 @@ def load(sess):
         ids.add(dn.get("id"))
 
     # 连线：解析出的真实连线（话题改名后重新按名字归并）
+    # 归并键用 normalize 过的名字：`odom` 和 `/odom` 在根命名空间下是同一个话题，
+    # 仓库里两种写法混用是常态。按原样比会出现「stats 说有 3 条边、图上一根没有」。
     edges, seen = [], set()
     by_topic = {}
     for n in nodes:
@@ -192,22 +194,27 @@ def load(sess):
                 if not it.get("resolved", True):
                     continue
                 t = it.get("topic") or ""
-                if not t:
+                key = graph.norm_topic(t)
+                if not key:
                     continue
-                rec = by_topic.setdefault(t, {"pubs": [], "subs": [], "types": []})
+                rec = by_topic.setdefault(key, {"name": t, "pubs": [], "subs": [],
+                                                "types": []})
+                if t.startswith("/") and not rec["name"].startswith("/"):
+                    rec["name"] = t
                 (rec["pubs"] if role == "pub" else rec["subs"]).append(n["id"])
                 if it.get("type") and it["type"] not in rec["types"]:
                     rec["types"].append(it["type"])
 
-    for topic, rec in sorted(by_topic.items()):
+    for key, rec in sorted(by_topic.items()):
+        topic = rec["name"]
         for p in rec["pubs"]:
             for s in rec["subs"]:
                 if p == s:
                     continue
-                key = (p, s, topic)
-                if key in seen:
+                sig = (p, s, key)
+                if sig in seen:
                     continue
-                seen.add(key)
+                seen.add(sig)
                 edges.append({"from": p, "to": s, "topic": topic,
                               "type": rec["types"][0] if rec["types"] else "",
                               "draft": False})
@@ -489,43 +496,14 @@ setup(
 
 
 def _ensure_package(root, pkg, nodes=None):
-    """保证 src/<pkg> 是一个能 colcon build 的合法包（缺什么补什么）。"""
-    base = os.path.join(root, "src", pkg)
-    inner = os.path.join(base, pkg)
-    os.makedirs(inner, exist_ok=True)
-    os.makedirs(os.path.join(base, "resource"), exist_ok=True)
-    os.makedirs(os.path.join(base, "test"), exist_ok=True)
+    """保证 src/<pkg> 是一个能 colcon build 的合法包（缺什么补什么）。
 
-    px = os.path.join(base, "package.xml")
-    if not os.path.isfile(px):
-        with open(px, "w", encoding="utf-8", newline="\n") as f:
-            f.write(_PKG_XML % {"name": pkg, "desc": "ROS2 nodes"})
-    res = os.path.join(base, "resource", pkg)
-    if not os.path.isfile(res):
-        open(res, "w").close()
-    sp = os.path.join(base, "setup.py")
-    entries = "".join("            '%s = %s.%s:main',\n"
-                      % (n, pkg, n) for n in (nodes or []))
-    if not os.path.isfile(sp):
-        with open(sp, "w", encoding="utf-8", newline="\n") as f:
-            f.write(_SETUP_PY % {"name": pkg, "desc": "ROS2 nodes",
-                                 "entries": entries})
-    elif nodes:
-        # 已有 setup.py：把新节点的入口补进 console_scripts
-        with open(sp, "r", encoding="utf-8") as f:
-            txt = f.read()
-        add = ""
-        for n in nodes:
-            if ("'%s =" % n) not in txt and ('"%s =' % n) not in txt:
-                add += "            '%s = %s.%s:main',\n" % (n, pkg, n)
-        if add:
-            txt = txt.replace("console_scripts': [", "console_scripts': [\n" + add, 1)
-            with open(sp, "w", encoding="utf-8", newline="\n") as f:
-                f.write(txt)
-    init = os.path.join(inner, "__init__.py")
-    if not os.path.isfile(init):
-        open(init, "w").close()
-    return base
+    具体补哪几样、入口怎么从目录里的文件推出来，都交给 pkg_scaffold —— 会话里
+    「写节点」那条路也走它，两边生成的壳必须一模一样，不然同一个项目换个入口进来
+    编译行为就变了。nodes 参数留着只为兼容老调用：入口以磁盘上的文件为准。
+    """
+    from . import pkg_scaffold
+    return pkg_scaffold.ensure(root, pkg)
 
 
 _CODER_SYS = """你在为一个 ROS 2 Jazzy（Python 3.12，rclpy）项目写一个节点。
@@ -661,11 +639,13 @@ def commit(sess, cfg, body=None):
             errors.append("节点 %s 生成失败：%s" % (name, e))
             continue
 
-        base = _ensure_package(root, pkg, [name])
+        _ensure_package(root, pkg, [name])
         full = os.path.join(root, rel.replace("/", os.sep))
         os.makedirs(os.path.dirname(full), exist_ok=True)
         with open(full, "w", encoding="utf-8", newline="\n") as f:
             f.write(code)
+        # 写完再补一次：入口是从目录里的文件推出来的，先补壳后落盘只会漏掉这个节点
+        _ensure_package(root, pkg)
         created.append({"node": name, "package": pkg, "file": rel,
                         "summary": "新建节点 %s（%s）" % (name, rel)})
         for nd in parsed["nodes"]:

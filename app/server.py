@@ -20,14 +20,18 @@ import io
 import json
 import os
 import re
+import shutil
+import hashlib
 import zipfile
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from app.config import load_config, api_configured, key_hint, CONFIG_PATH
 from app.kb import get_retriever
 from app import (orchestrator, store, archive, auth, env, paths,
                  identity, ratelimit, vision, versions, sandbox,
-                 project_import, graph_api, agents, model_inspect, model_scene)
+                 project_import, graph_api, agents, chain_verify, pkgcache,
+                 accounts, model_inspect, model_scene)
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 PUBLIC = os.path.join(_ROOT, "public")
@@ -117,6 +121,51 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return self.rfile.read(n)
 
+    def _auth_route(self, path):
+        """账号接口：注册 / 登录 / 退出 / 当前身份。
+
+        这几个路径不能走 _guard：它们本身就是「拿身份」的入口，
+        而且必须是幂等的公开入口，否则新用户永远进不来。
+        """
+        if path == "/api/auth/me":
+            uid = identity.from_cookie(self.headers)
+            acc = accounts.by_uid(uid) if uid else None
+            return self._json({"ok": True, "loggedIn": bool(acc),
+                               "username": (acc or {}).get("username", ""),
+                               "created_at": (acc or {}).get("created_at", "")})
+
+        if path == "/api/auth/logout":
+            # 退出后换一个新匿名身份：原账号的数据不再对本浏览器可见
+            return self._json({"ok": True}, 200,
+                              {"Set-Cookie": identity.cookie_header(
+                                  identity.new_uid(), self._https())})
+
+        if path not in ("/api/auth/register", "/api/auth/login"):
+            return self._json({"error": "not found"}, 404)
+        if self.command != "POST":
+            return self._json({"ok": False, "message": "只接受 POST"}, 405)
+
+        body = self._read_body()
+        username = str(body.get("username") or "")
+        password = str(body.get("password") or "")
+        if path == "/api/auth/register":
+            old_uid = identity.from_cookie(self.headers)
+            ok, msg, uid, name = accounts.register(username, password)
+            if not ok:
+                return self._json({"ok": False, "error": "register_failed",
+                                   "message": msg}, 400)
+            # 注册前这台设备上聊过的会话与画像，一并带进新账号
+            moved = orchestrator.reassign(old_uid, uid)
+            return self._json({"ok": True, "username": name, "migrated": moved},
+                              200, {"Set-Cookie": identity.cookie_header(uid, self._https())})
+
+        ok, msg, uid, name = accounts.login(username, password)
+        if not ok:
+            return self._json({"ok": False, "error": "login_failed",
+                               "message": msg}, 401)
+        return self._json({"ok": True, "username": name}, 200,
+                          {"Set-Cookie": identity.cookie_header(uid, self._https())})
+
     def _guard(self, kind="api"):
         """访问控制流水线：IP 白名单 → 令牌 → 身份 Cookie → 限流。
 
@@ -186,7 +235,9 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?")[0]
         bound = None
         if path.startswith("/api/") and path not in ("/api/health", "/api/identity",
-                                                     "/api/meta"):
+                                                     "/api/meta",
+                                                     "/api/auth/me", "/api/auth/login",
+                                                     "/api/auth/register", "/api/auth/logout"):
             ok, bound = self._guard()
             if not ok:
                 return
@@ -212,6 +263,8 @@ class Handler(BaseHTTPRequestHandler):
                     {"user_id": uid, "fresh": fresh},
                     200,
                     {"Set-Cookie": identity.cookie_header(uid, self._https())})
+            elif path.startswith("/api/auth/"):
+                self._auth_route(path)
             elif path == "/api/meta":
                 # 版本口径单独开口子：评审/部署都靠它确认「跑的是哪个版本」
                 cfg = current_config()
@@ -219,6 +272,8 @@ class Handler(BaseHTTPRequestHandler):
                 info["sandbox"] = sandbox.status(cfg)
                 info["kb"] = {"docs": get_retriever().N,
                               "files": len({s for s, _t in get_retriever().docs})}
+                # 本地包池：部署包里有没有带上 deb，靠这个接口就能确认
+                info["pkgpool"] = pkgcache.summary()
                 self._json(info)
             elif path == "/api/agents":
                 # 协作角色清单：让「多 Agent」可被外部核验，而不是只写在 PPT 里
@@ -238,7 +293,7 @@ class Handler(BaseHTTPRequestHandler):
                     "key_source": cfg.get("keySource", "none"),
                     "auth_required": auth.enabled(),
                     "ip_restricted": auth.ip_restricted(),
-                    "identity": "cookie",
+                    "identity": identity.describe(),
                     "rate_limit": ratelimit.describe(),
                     "daily_used": ratelimit.daily_usage(),
                     # 版本口径：健康检查就带上，前端徽标直接读这里
@@ -327,7 +382,7 @@ class Handler(BaseHTTPRequestHandler):
                     "level": sess.level,
                     "userId": sess.user_id,
                     "history": sess.history,
-                    "transcript": orchestrator.transcript_for_replay(sess),
+                    "transcript": sess.transcript,
                 })
             elif path == "/api/graph":
                 sid = self._query().get("sid", "")
@@ -338,6 +393,16 @@ class Handler(BaseHTTPRequestHandler):
                 if not self._may_access(bound, sess.user_id):
                     return self._json({"error": "forbidden", "message": "无权访问该会话"}, 403)
                 self._json(graph_api.load(sess))
+            elif path == "/api/graph/verify/status":
+                sid = self._query().get("sid", "")
+                if not _SAFE_SID.match(sid):
+                    return self._json({"error": "bad session id"}, 400)
+                sess = orchestrator.get_session(sid)
+                self._claim(sess, bound)
+                if not self._may_access(bound, sess.user_id):
+                    return self._json({"error": "forbidden",
+                                       "message": "无权访问该会话"}, 403)
+                self._json(chain_verify.snapshot(sid, sess))
             elif path == "/api/graph/node":
                 sid = self._query().get("sid", "")
                 rel = self._query().get("path", "")
@@ -349,6 +414,21 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"error": "forbidden", "message": "无权访问该会话"}, 403)
                 res = graph_api.read_node_source(sess, rel)
                 self._json(res, 200 if res.get("ok") else 400)
+            elif path.startswith("/api/model/"):
+                # 模型 3D 预览：服务端解析成关节树，前端只负责摆位置
+                sid = path[len("/api/model/"):]
+                if not _SAFE_SID.match(sid):
+                    return self._json({"error": "bad session id"}, 400)
+                sess = orchestrator.get_session(sid)
+                self._claim(sess, bound)
+                if not self._may_access(bound, sess.user_id):
+                    return self._json({"error": "forbidden", "message": "无权访问该会话"}, 403)
+                from urllib.parse import urlparse, parse_qs
+                q = parse_qs(urlparse(self.path).query)
+                pkg = (q.get("pkg") or [""])[0].strip()
+                if pkg and not re.fullmatch(r"[A-Za-z0-9_]{1,64}", pkg):
+                    pkg = ""
+                self._json(model_scene.build_scene(sess, pkg=pkg or None))
             elif path.startswith("/api/files/") and path.endswith("/zip"):
                 sid = path[len("/api/files/"):-len("/zip")]
                 if not _SAFE_SID.match(sid):
@@ -376,21 +456,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
-            elif path.startswith("/api/model/"):
-                # 模型 3D 预览：服务端解析成关节树，前端只负责摆位置
-                sid = path[len("/api/model/"):]
-                if not _SAFE_SID.match(sid):
-                    return self._json({"error": "bad session id"}, 400)
-                sess = orchestrator.get_session(sid)
-                self._claim(sess, bound)
-                if not self._may_access(bound, sess.user_id):
-                    return self._json({"error": "forbidden", "message": "无权访问该会话"}, 403)
-                from urllib.parse import urlparse, parse_qs
-                q = parse_qs(urlparse(self.path).query)
-                pkg = (q.get("pkg") or [""])[0].strip()
-                if pkg and not re.fullmatch(r"[A-Za-z0-9_]{1,64}", pkg):
-                    pkg = ""
-                self._json(model_scene.build_scene(sess, pkg=pkg or None))
             elif path.startswith("/api/files/"):
                 sid = path[len("/api/files/"):]
                 if not _SAFE_SID.match(sid):
@@ -413,6 +478,8 @@ class Handler(BaseHTTPRequestHandler):
     # ---------- POST ----------
     def do_POST(self):
         path = self.path.split("?")[0]
+        if path.startswith("/api/auth/"):
+            return self._auth_route(path)
         # 会话删除 / 归档：单独分发
         if path.startswith("/api/session/"):
             if not (path.endswith("/delete") or path.endswith("/archive")):
@@ -423,6 +490,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._session_action(bound, path)
         if path not in ("/api/archive", "/api/chat", "/api/chat/stream",
                         "/api/upload", "/api/project/import",
+                        "/api/project/import-zip",
+                        "/api/project/import-chunk",
                         "/api/project/remove"):
             if not path.startswith("/api/graph/"):
                 return self._json({"error": "not found"}, 404)
@@ -436,6 +505,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._upload(bound)
         if path == "/api/project/import":
             return self._project_import(bound)
+        if path == "/api/project/import-zip":
+            return self._project_import_zip(bound)
+        if path == "/api/project/import-chunk":
+            return self._project_import_chunk(bound)
         if path == "/api/project/remove":
             return self._project_remove(bound)
         if path == "/api/archive":
@@ -524,6 +597,23 @@ class Handler(BaseHTTPRequestHandler):
         if not self._may_access(bound, sess.user_id):
             return self._json({"error": "forbidden", "message": "无权访问该会话"}, 403)
 
+        # ---- 链路级验证：真实编译 + 全节点运行 + 逐跳断言 ----
+        if path == "/api/graph/verify":
+            if chain_verify.busy(sid, sess):
+                return self._json({"error": "busy", "message":
+                                   "这个会话正在验证中，先点「退出验证」再重新编译"}, 409)
+            if not (graph_api.load(sess).get("nodes") or []):
+                return self._json({"error": "empty", "message":
+                                   "架构图还是空的：先上传项目、生成架构图"}, 400)
+            try:
+                chain_verify.start(current_config(), sess, sid)
+            except Exception as e:  # noqa: BLE001
+                return self._json({"error": "start_failed",
+                                   "message": "验证启动失败：%r" % e}, 500)
+            return self._json(chain_verify.snapshot(sid, sess))
+        if path == "/api/graph/verify/cancel":
+            return self._json({"ok": bool(chain_verify.cancel(sid)),
+                               "state": chain_verify.snapshot(sid, sess)})
         if path == "/api/graph/draft":
             graph_api.save_draft(sess, body.get("draft") or {})
             return self._json({"ok": True})
@@ -554,10 +644,10 @@ class Handler(BaseHTTPRequestHandler):
         前端用文件夹选择器读取文件后，以 {sessionId, files:[{path,content}]}
         形式提交；path 是相对项目根目录的路径。体积上限由 project_import 控制。
         """
-        raw = self._raw_body(140 * 1024 * 1024)   # 100MB 总量 + base64 膨胀约 4/3
+        raw = self._raw_body(400 * 1024 * 1024)   # 300MB 压缩包 + base64 膨胀约 4/3 + JSON 开销
         if raw is None:
             return self._json({"error": "too_large",
-                               "message": "项目文件过大（上限约 100MB）"}, 413)
+                               "message": "项目文件过大（压缩包上限约 300MB）"}, 413)
         try:
             body = json.loads(raw.decode("utf-8"))
         except Exception:
@@ -586,8 +676,14 @@ class Handler(BaseHTTPRequestHandler):
             "files": sess.file_tree(),
             "nodes": [],
         }
-        # 导入即体检：模型文件结构 + 控制层是否齐备。
-        # 修复是就地进行的，学生能在文件树里直接看到改了哪几处。
+        return self._json(self._attach_inspect(payload, sess))
+
+    def _attach_inspect(self, payload, sess):
+        """导入后体检：模型文件结构 + 控制层是否齐备，就地修复并回填报告。
+
+        三条导入路径（散文件 / 单 zip 直传 / 分片 zip）共用，避免三份重复。
+        修复就地落盘，学生能在文件树里直接看到改了哪几处。
+        """
         try:
             diag, fixed, blocked = model_inspect.prepare(sess)
             if diag.get("models"):
@@ -599,13 +695,145 @@ class Handler(BaseHTTPRequestHandler):
                                  {"key": "2", "label": "先不用，我自己接"}]
                                 if diag.get("actionable") else []),
                 }
+                # 导入的包里有 URDF/xacro：告诉前端「自动挂 3D 预览」，并带上主模型
+                # 所属的包名——同一会话可能有多套模型，锁到正确那套，否则预览会画错。
+                # 注意：SDF 只做结构体检，不进 3D 预览（model_scene 不解析 SDF），
+                # 所以只有能预览的格式才置 model_preview，避免前端挂出一个空槽。
+                previewable = [m for m in diag["models"]
+                               if (m.get("path") or "").lower().endswith((".urdf", ".xacro"))]
+                if previewable:
+                    payload["model_preview"] = True
+                    main = diag.get("main") or {}
+                    segs = (main.get("path") or "").split("/")
+                    if "urdf" in segs:
+                        i = segs.index("urdf")
+                        if i >= 1:
+                            payload["model_package"] = segs[i - 1]
                 if diag.get("actionable"):
                     sess.pending = "model_fix"
                     sess.save()
                 payload["files"] = sess.file_tree()
         except Exception as e:
             payload["inspect"] = {"error": "体检失败：%s" % e}
-        return self._json(payload)
+        return payload
+
+    def _project_import_zip(self, bound):
+        """二进制直传 zip 导入：大 zip 走 raw body，避免 base64 JSON 膨胀。
+
+        前端把 File 对象直接当 body（浏览器按二进制发，不 base64），
+        sessionId 与文件名放 query。这里读原始字节后校验 zip 魔数，
+        再把 bytes 直接交给 import_to_session 展开。
+        """
+        q = self._query()
+        sid = q.get("sessionId", "")
+        name = q.get("name", "") or "import.zip"
+        if not _SAFE_SID.match(sid):
+            return self._json({"error": "bad session id"}, 400)
+        sess = orchestrator.get_session(sid)
+        self._claim(sess, bound)
+
+        raw = self._raw_body(320 * 1024 * 1024)   # 二进制 zip 上限约 300MB
+        if raw is None:
+            return self._json({"error": "too_large",
+                               "message": "压缩包过大（上限约 300MB）"}, 413)
+        if len(raw) < 4 or raw[:2] != b"PK":
+            return self._json({"error": "bad zip",
+                               "message": "不是有效的 zip 文件"}, 400)
+
+        ok, message, struct = project_import.import_to_session(
+            sess, [{"path": name, "data": raw}])
+        if not ok:
+            return self._json({"ok": False, "message": message,
+                               "recognized": project_import.to_json(
+                                   getattr(sess, "imported_project", None))}, 400)
+        payload = {
+            "ok": True,
+            "message": message,
+            "imported_project": project_import.to_json(sess.imported_project),
+            "files": sess.file_tree(),
+            "nodes": [],
+        }
+        return self._json(self._attach_inspect(payload, sess))
+
+    def _project_import_chunk(self, bound):
+        """分片上传 zip：绕过网关对单请求 body ~50MB 的硬上限。
+
+        前端把大 zip 切成 ≤32MB 的片，按 index 逐片 POST；非最后一片只落临时
+        分片文件，最后一片（final=1）按序拼接成完整 zip 后走 import_to_session。
+        分片文件按 sessionId 哈希隔离，导入完成（无论成败）即清理。
+        """
+        q = self._query()
+        sid = q.get("sessionId", "")
+        name = q.get("name", "") or "import.zip"
+        try:
+            idx = int(q.get("index", "0"))
+            total = int(q.get("total", "1"))
+        except ValueError:
+            return self._json({"error": "bad index"}, 400)
+        final = q.get("final") == "1"
+        if not _SAFE_SID.match(sid):
+            return self._json({"error": "bad session id"}, 400)
+
+        sess = orchestrator.get_session(sid)
+        self._claim(sess, bound)
+
+        try:
+            clen = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            clen = 0
+        if clen <= 0:
+            # 没带长度不一定是「太大」：代理用 chunked 转发、或请求被中途改写都会这样。
+            # 直接回「单片过大」会让用户去改分片大小，方向完全错了。
+            return self._json({"error": "no_length",
+                               "message": "上传请求没有带 Content-Length（可能被代理改写），"
+                                          "刷新页面后重试"}, 411)
+        raw = self._raw_body(40 * 1024 * 1024)   # 单片上限 40MB（< 网关 ~50MB）
+        if raw is None:
+            return self._json({"error": "too_large", "message": "单片过大"}, 413)
+
+        key = hashlib.sha256(sid.encode("utf-8")).hexdigest()[:16]
+        tmp = os.path.join(paths.data(), "chunks", key)
+        if idx == 0 and os.path.isdir(tmp):
+            # 新上传从第 0 片重新开始：清掉上次中断留下的零散分片，
+            # 否则新旧分片会拼在一起，得到损坏的 zip。
+            shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(tmp, exist_ok=True)
+        with open(os.path.join(tmp, "%d.part" % idx), "wb") as fh:
+            fh.write(raw)
+
+        if not final:
+            return self._json({"ok": True, "received": idx, "total": total})
+
+        # 最后一片：按序拼接完整 zip
+        buf = bytearray()
+        complete = True
+        for i in range(total):
+            p = os.path.join(tmp, "%d.part" % i)
+            if not os.path.isfile(p):
+                complete = False
+                break
+            with open(p, "rb") as fh:
+                buf += fh.read()
+        shutil.rmtree(tmp, ignore_errors=True)   # 无论成败都清临时分片
+
+        if not complete or not buf:
+            return self._json({"ok": False,
+                               "message": "分片不完整，请重新导入"}, 400)
+
+        ok, message, struct = project_import.import_to_session(
+            sess, [{"path": name, "data": bytes(buf)}])
+        if not ok:
+            return self._json({"ok": False, "message": message,
+                               "recognized": project_import.to_json(
+                                   getattr(sess, "imported_project", None))}, 400)
+        payload = {
+            "ok": True,
+            "message": message,
+            "imported_project": project_import.to_json(sess.imported_project),
+            "files": sess.file_tree(),
+            "nodes": [],
+        }
+        return self._json(self._attach_inspect(payload, sess))
 
     def _project_remove(self, bound):
         """移除当前会话里的项目（清空工作区），聊天记录保留。"""
@@ -697,30 +925,46 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
 
+def _warm(port):
+    """启动后的重活，放后台线程做。
+
+    托管平台判断「服务起没起来」只等 60 秒，而这台机器上很可能正有一个
+    容器在满核编译（比如上一轮验证还没跑完）—— 这时候同步加载 1550 个
+    知识块、探测沙箱后端，很容易把 60 秒耗光，平台就判「服务没有响应」，
+    整个发布失败，连线上原有服务一起拖下水。
+    所以端口一能接受连接就先 serve，这些活挪到后台补。
+    """
+    try:
+        retr = get_retriever()
+        cfg = current_config()
+        sandbox.warm()
+        print("ROS2 学习助手已启动: http://0.0.0.0:%s" % port)
+        print("系统版本: v%s | 目标版本: %s" % (versions.APP_VERSION, versions.label(cfg)))
+        print("知识库: %d 个文档块 | 模型已配置: %s" % (retr.N, api_configured(cfg)))
+        print(paths.describe())
+        print("访问控制: %s" % auth.describe())
+        print("身份: %s" % identity.describe())
+        print("限流: %s" % ratelimit.describe())
+        sb = sandbox.status(cfg)
+        print("编译验证: %s" % ("可用（%s）" % sb["backend"] if sb["available"]
+                                else "未启用（%s）" % sb["reason"]))
+        if not api_configured(cfg):
+            print("[!] " + key_hint(cfg))
+        days = (_CFG.get("memory") or {}).get("archive_days", 30)
+        archive.start_scheduler(interval_hours=24, days=days,
+                                keep_fn=orchestrator.active_sids)
+        print("旧会话归档：启动完成，%s 天未活动的会话会被打包" % days)
+    except Exception as e:                              # noqa: BLE001
+        print("[!] 后台初始化失败：%s" % e)
+
+
 def main():
     env.load()                       # 先读 .env：密钥、令牌、数据目录
     paths.ensure_all()
     port = int(os.environ.get("PORT") or 8000)
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
-    retr = get_retriever()
-    cfg = current_config()
-    sandbox.warm()                   # 后台测编译沙箱后端，避免首屏卡住
-    print("ROS2 学习助手已启动: http://0.0.0.0:%s" % port)
-    print("系统版本: v%s | 目标版本: %s" % (versions.APP_VERSION, versions.label(cfg)))
-    print("知识库: %d 个文档块 | 模型已配置: %s" % (retr.N, api_configured(cfg)))
-    print(paths.describe())
-    print("访问控制: %s" % auth.describe())
-    print("身份: %s" % identity.describe())
-    print("限流: %s" % ratelimit.describe())
-    sb = sandbox.status(cfg)
-    print("编译验证: %s" % ("可用（%s）" % sb["backend"] if sb["available"]
-                            else "未启用（%s）" % sb["reason"]))
-    if not api_configured(cfg):
-        print("[!] " + key_hint(cfg))
-    days = (_CFG.get("memory") or {}).get("archive_days", 30)
-    archive.start_scheduler(interval_hours=24, days=days,
-                            keep_fn=orchestrator.active_sids)
-    print("旧会话归档：启动完成，%s 天未活动的会话会被打包" % days)
+    threading.Thread(target=_warm, args=(port,), daemon=True).start()
+    print("监听 %s，后台初始化中…" % port)
     server.serve_forever()
 
 

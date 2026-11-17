@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ROS2 学习助手 · Jazzy/Python</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/static/style.css?v=66">
+<link rel="stylesheet" href="/static/style.css?v=69">
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
@@ -19,6 +19,19 @@
         <h1>ROS2 学习助手</h1>
         <p class="sub">ROS 2 Jazzy · Python · 学长陪练</p>
       </div>
+    </div>
+
+    <!-- 账号入口（左上角）：登录后历史会话与学习画像跟着账号走，换电脑也在 -->
+    <div class="account" id="account-box">
+      <button id="account-open" class="account-btn" type="button">
+        <span class="account-avatar" id="account-avatar">?</span>
+        <span class="account-info">
+          <span class="account-name" id="account-name">未登录</span>
+          <span class="account-sub" id="account-sub">登录 / 注册</span>
+        </span>
+      </button>
+      <button id="account-logout" class="mini-btn hidden" type="button"
+              title="退出登录">退出</button>
     </div>
 
     <div class="panel">
@@ -95,6 +108,10 @@
       <button id="menu-btn" class="icon-btn" title="打开菜单" aria-label="打开菜单">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
+      <button id="account-open-top" class="icon-btn" type="button" title="登录 / 注册"
+              aria-label="登录或注册">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20c1.2-3.6 4-5.4 7.5-5.4S18.3 16.4 19.5 20"/></svg>
+      </button>
       <span class="topbar-title">ROS2 学习助手</span>
       <button id="toggle-graph" class="mini-btn" title="显示 / 收起架构图">架构图</button>
     </header>
@@ -112,6 +129,7 @@
               <span id="gp-zoom">100%</span>
               <button id="gp-zoom-in" class="icon-btn sm" title="放大">+</button>
             </span>
+            <button id="gp-verify" class="mini-btn verify" title="真实编译并跑通整条链路">编译运行</button>
             <button id="gp-commit" class="mini-btn primary" title="把图纸上的改动写进代码">提交</button>
             <button id="gp-collapse" class="mini-btn" title="收起架构图">收起</button>
           </div>
@@ -124,6 +142,33 @@
               还没有项目可画。<br>
               左边点文件夹图标导入现成项目（或把 .zip 拖进来）；<br>
               也可以直接跟它说「我想做一个避障小车」，代码生成完会问你要不要接着改这张图。
+            </div>
+            <div class="gp-compile" id="gp-compile" title="链路验证：编译 → 起节点 → 逐跳取证">
+              <span class="gp-compile-dot"></span>
+              <span class="gp-compile-name">链路验证</span>
+              <span class="gp-compile-info" id="gp-compile-info">未验证</span>
+            </div>
+            <div class="vy-result hidden" id="vy-result">
+              <div class="vy-result-main">
+                <span class="vy-result-head" id="vy-result-head"></span>
+                <span class="vy-result-body" id="vy-result-body"></span>
+                <span class="vy-result-note hidden" id="vy-result-note"></span>
+                <span class="vy-result-hint hidden" id="vy-result-hint"></span>
+                <button class="vy-result-toggle hidden" id="vy-result-toggle" type="button">详情</button>
+              </div>
+              <button class="vy-result-x" id="vy-result-close" title="收起">×</button>
+            </div>
+            <div class="vy-draft hidden" id="vy-draft">
+              <div class="vy-draft-card">
+                <h4>架构图有 <b id="vy-draft-n">0</b> 处改动还没提交</h4>
+                <p>不提交就跑，验证的是你上传（或上次提交）的那一份，
+                   图上这些改动<b>不参与</b>这次编译运行。</p>
+                <div class="vy-draft-btns">
+                  <button class="mini-btn" data-act="committed">按已提交版本运行</button>
+                  <button class="mini-btn primary" data-act="commit">先提交再运行</button>
+                  <button class="mini-btn" data-act="cancel">取消</button>
+                </div>
+              </div>
             </div>
             <div class="gp-hint" id="gp-hint"></div>
             <div class="gp-legend">
@@ -200,8 +245,37 @@
   }
 }
 </script>
-<script src="/static/app.js?v=66"></script>
-<script src="/static/viewer_babylon.js?v=66"></script>
-<script src="/static/graph.js?v=66"></script>
+<script src="/static/app.js?v=69"></script>
+<script src="/static/viewer_babylon.js?v=69"></script>
+<script src="/static/graph.js?v=69"></script>
+<div id="auth-mask" class="auth-mask hidden" role="dialog" aria-modal="true"
+     aria-labelledby="auth-title">
+  <div class="auth-card">
+    <div class="auth-head">
+      <h3 id="auth-title">登录账号</h3>
+      <button id="auth-close" class="icon-btn" type="button" aria-label="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="auth-tabs" role="tablist">
+      <button class="auth-tab on" data-mode="login" type="button" role="tab">登录</button>
+      <button class="auth-tab" data-mode="register" type="button" role="tab">注册</button>
+    </div>
+    <label class="auth-field"><span>用户名</span>
+      <input id="auth-user" type="text" autocomplete="username" maxlength="24"
+             placeholder="2–24 位，字母 / 数字 / 下划线 / 中文">
+    </label>
+    <label class="auth-field"><span>密码</span>
+      <input id="auth-pass" type="password" autocomplete="current-password" maxlength="64"
+             placeholder="至少 6 位">
+    </label>
+    <div id="auth-msg" class="auth-msg"></div>
+    <div class="auth-actions">
+      <button id="auth-submit" class="btn" type="button">登录</button>
+    </div>
+    <p class="auth-tip">新用户请先切到「注册」。登录后历史会话、学习画像、生成的项目都跟着账号走，换电脑也在。</p>
+  </div>
+</div>
+
 </body>
 </html>

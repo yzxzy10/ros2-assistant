@@ -1,0 +1,387 @@
+{
+  "ros-jazzy-action-msgs": {
+    "deb": "ros-jazzy-action-msgs_2.0.4-1noble.20260911.052334_amd64.deb",
+    "depends": [
+      "libc6",
+      "libgcc-s1",
+      "libpython3.12t64",
+      "libstdc++6",
+      "ros-jazzy-fastcdr",
+      "ros-jazzy-builtin-interfaces",
+      "ros-jazzy-rosidl-core-runtime",
+      "ros-jazzy-service-msgs",
+      "ros-jazzy-unique-identifier-msgs",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "2.0.4-1noble.20260911.052334"
+  },
+  "ros-jazzy-ament-index-python": {
+    "deb": "ros-jazzy-ament-index-python_1.8.4-1noble.20260519.010916_amd64.deb",
+    "depends": [
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "1.8.4-1noble.20260519.010916"
+  },
+  "ros-jazzy-builtin-interfaces": {
+    "deb": "ros-jazzy-builtin-interfaces_2.0.4-1noble.20260911.051559_amd64.deb",
+    "depends": [
+      "libc6",
+      "libpython3.12t64",
+      "ros-jazzy-fastcdr",
+      "ros-jazzy-rosidl-core-runtime",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "2.0.4-1noble.20260911.051559"
+  },
+  "ros-jazzy-fastcdr": {
+    "deb": "ros-jazzy-fastcdr_2.2.8-1noble.20260901.205404_amd64.deb",
+    "depends": [
+      "libc6",
+      "libgcc-s1",
+      "libstdc++6",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "2.2.8-1noble.20260901.205404"
+  },
+  "ros-jazzy-fastrtps-cmake-module": {
+    "deb": "ros-jazzy-fastrtps-cmake-module_3.6.4-1noble.20260603.150331_amd64.deb",
+    "depends": [
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "3.6.4-1noble.20260603.150331"
+  },
+  "ros-jazzy-geometry-msgs": {
+    "deb": "ros-jazzy-geometry-msgs_5.3.8-1noble.20260911.102920_amd64.deb",
+    "depends": [
+      "libc6",
+      "libgcc-s1",
+      "libpython3.12t64",
+      "libstdc++6",
+      "ros-jazzy-fastcdr",
+      "ros-jazzy-rosidl-default-runtime",
+      "ros-jazzy-std-msgs",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "5.3.8-1noble.20260911.102920"
+  },
+  "ros-jazzy-rcpputils": {
+    "deb": "ros-jazzy-rcpputils_2.11.4-1noble.20260911.045839_amd64.deb",
+    "depends": [
+      "libc6",
+      "libgcc-s1",
+      "libstdc++6",
+      "ros-jazzy-rcutils",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "2.11.4-1noble.20260911.045839"
+  },
+  "ros-jazzy-rcutils": {
+    "deb": "ros-jazzy-rcutils_6.7.6-1noble.20260911.045439_amd64.deb",
+    "depends": [
+      "libc6",
+      "libatomic1",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "6.7.6-1noble.20260911.045439"
+  },
+  "ros-jazzy-rmw": {
+    "deb": "ros-jazzy-rmw_7.3.4-1noble.20260911.050254_amd64.deb",
+    "depends": [
+      "libc6",
+      "ros-jazzy-rcutils",
+      "ros-jazzy-rosidl-dynamic-typesupport",
+      "ros-jazzy-rosidl-runtime-c",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "7.3.4-1noble.20260911.050254"
+  },
+  "ros-jazzy-ros-workspace": {
+    "deb": "ros-jazzy-ros-workspace_1.0.3-7noble.20260224.191628_amd64.deb",
+    "depends": [],
+    "version": "1.0.3-7noble.20260224.191628"
+  },
+  "ros-jazzy-rosidl-adapter": {
+    "deb": "ros-jazzy-rosidl-adapter_4.6.9-1noble.20260612.045507_amd64.deb",
+    "depends": [
+      "python3-dev",
+      "python3-empy",
+      "ros-jazzy-ament-cmake-core",
+      "ros-jazzy-rosidl-cli",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "4.6.9-1noble.20260612.045507"
+  },
+  "ros-jazzy-rosidl-cli": {
+    "deb": "ros-jazzy-rosidl-cli_4.6.9-1noble.20260612.045120_amd64.deb",
+    "depends": [
+      "python3-argcomplete",
+      "python3-importlib-metadata",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "4.6.9-1noble.20260612.045120"
+  },
+  "ros-jazzy-rosidl-cmake": {
+    "deb": "ros-jazzy-rosidl-cmake_4.6.9-1noble.20260612.050210_amd64.deb",
+    "depends": [
+      "python3-empy",
+      "ros-jazzy-ament-cmake",
+      "ros-jazzy-rosidl-pycommon",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "4.6.9-1noble.20260612.050210"
+  },
+  "ros-jazzy-rosidl-core-runtime": {
+    "deb": "ros-jazzy-rosidl-core-runtime_0.2.1-1noble.20260911.051106_amd64.deb",
+    "depends": [
+      "ros-jazzy-rosidl-generator-py",
+      "ros-jazzy-rosidl-runtime-c",
+      "ros-jazzy-rosidl-runtime-cpp",
+      "ros-jazzy-rosidl-typesupport-c",
+      "ros-jazzy-rosidl-typesupport-cpp",
+      "ros-jazzy-rosidl-typesupport-fastrtps-c",
+      "ros-jazzy-rosidl-typesupport-fastrtps-cpp",
+      "ros-jazzy-rosidl-typesupport-introspection-c",
+      "ros-jazzy-rosidl-typesupport-introspection-cpp",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "0.2.1-1noble.20260911.051106"
+  },
+  "ros-jazzy-rosidl-default-runtime": {
+    "deb": "ros-jazzy-rosidl-default-runtime_1.6.1-1noble.20260911.052508_amd64.deb",
+    "depends": [
+      "ros-jazzy-action-msgs",
+      "ros-jazzy-rosidl-core-runtime",
+      "ros-jazzy-service-msgs",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "1.6.1-1noble.20260911.052508"
+  },
+  "ros-jazzy-rosidl-dynamic-typesupport": {
+    "deb": "ros-jazzy-rosidl-dynamic-typesupport_0.1.2-3noble.20260911.050021_amd64.deb",
+    "depends": [
+      "libc6",
+      "ros-jazzy-rcutils",
+      "ros-jazzy-rosidl-runtime-c",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "0.1.2-3noble.20260911.050021"
+  },
+  "ros-jazzy-rosidl-parser": {
+    "deb": "ros-jazzy-rosidl-parser_4.6.9-1noble.20260612.045810_amd64.deb",
+    "depends": [
+      "python3-lark",
+      "ros-jazzy-rosidl-adapter",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "4.6.9-1noble.20260612.045810"
+  },
+  "ros-jazzy-rosidl-pycommon": {
+    "deb": "ros-jazzy-rosidl-pycommon_4.6.9-1noble.20260612.045929_amd64.deb",
+    "depends": [
+      "ros-jazzy-rosidl-parser",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "4.6.9-1noble.20260612.045929"
+  },
+  "ros-jazzy-rosidl-runtime-c": {
+    "deb": "ros-jazzy-rosidl-runtime-c_4.6.9-1noble.20260911.045549_amd64.deb",
+    "depends": [
+      "libc6",
+      "ros-jazzy-ament-cmake",
+      "ros-jazzy-rcutils",
+      "ros-jazzy-rosidl-typesupport-interface",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "4.6.9-1noble.20260911.045549"
+  },
+  "ros-jazzy-rosidl-runtime-cpp": {
+    "deb": "ros-jazzy-rosidl-runtime-cpp_4.6.9-1noble.20260911.045824_amd64.deb",
+    "depends": [
+      "ros-jazzy-ament-cmake",
+      "ros-jazzy-rosidl-runtime-c",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "4.6.9-1noble.20260911.045824"
+  },
+  "ros-jazzy-rosidl-typesupport-c": {
+    "deb": "ros-jazzy-rosidl-typesupport-c_3.2.3-1noble.20260911.050252_amd64.deb",
+    "depends": [
+      "libc6",
+      "libgcc-s1",
+      "libstdc++6",
+      "python3-dev",
+      "ros-jazzy-ament-cmake-core",
+      "ros-jazzy-ament-index-python",
+      "ros-jazzy-rcpputils",
+      "ros-jazzy-rcutils",
+      "ros-jazzy-rosidl-cli",
+      "ros-jazzy-rosidl-generator-c",
+      "ros-jazzy-rosidl-pycommon",
+      "ros-jazzy-rosidl-runtime-c",
+      "ros-jazzy-rosidl-typesupport-interface",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "3.2.3-1noble.20260911.050252"
+  },
+  "ros-jazzy-rosidl-typesupport-cpp": {
+    "deb": "ros-jazzy-rosidl-typesupport-cpp_3.2.3-1noble.20260911.050655_amd64.deb",
+    "depends": [
+      "libc6",
+      "libstdc++6",
+      "python3-dev",
+      "ros-jazzy-ament-cmake-core",
+      "ros-jazzy-ament-index-python",
+      "ros-jazzy-rcpputils",
+      "ros-jazzy-rcutils",
+      "ros-jazzy-rosidl-cli",
+      "ros-jazzy-rosidl-generator-c",
+      "ros-jazzy-rosidl-generator-type-description",
+      "ros-jazzy-rosidl-pycommon",
+      "ros-jazzy-rosidl-runtime-c",
+      "ros-jazzy-rosidl-runtime-cpp",
+      "ros-jazzy-rosidl-typesupport-c",
+      "ros-jazzy-rosidl-typesupport-interface",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "3.2.3-1noble.20260911.050655"
+  },
+  "ros-jazzy-rosidl-typesupport-fastrtps-c": {
+    "deb": "ros-jazzy-rosidl-typesupport-fastrtps-c_3.6.4-1noble.20260911.050839_amd64.deb",
+    "depends": [
+      "libstdc++6",
+      "python3-dev",
+      "ros-jazzy-ament-cmake-ros",
+      "ros-jazzy-ament-index-python",
+      "ros-jazzy-fastcdr",
+      "ros-jazzy-fastrtps-cmake-module",
+      "ros-jazzy-rmw",
+      "ros-jazzy-rosidl-cli",
+      "ros-jazzy-rosidl-generator-c",
+      "ros-jazzy-rosidl-pycommon",
+      "ros-jazzy-rosidl-runtime-c",
+      "ros-jazzy-rosidl-runtime-cpp",
+      "ros-jazzy-rosidl-typesupport-fastrtps-cpp",
+      "ros-jazzy-rosidl-typesupport-interface",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "3.6.4-1noble.20260911.050839"
+  },
+  "ros-jazzy-rosidl-typesupport-fastrtps-cpp": {
+    "deb": "ros-jazzy-rosidl-typesupport-fastrtps-cpp_3.6.4-1noble.20260911.050552_amd64.deb",
+    "depends": [
+      "libc6",
+      "libstdc++6",
+      "python3-dev",
+      "ros-jazzy-ament-cmake-ros",
+      "ros-jazzy-ament-index-python",
+      "ros-jazzy-fastcdr",
+      "ros-jazzy-fastrtps-cmake-module",
+      "ros-jazzy-rmw",
+      "ros-jazzy-rosidl-cli",
+      "ros-jazzy-rosidl-generator-c",
+      "ros-jazzy-rosidl-generator-cpp",
+      "ros-jazzy-rosidl-pycommon",
+      "ros-jazzy-rosidl-runtime-c",
+      "ros-jazzy-rosidl-runtime-cpp",
+      "ros-jazzy-rosidl-typesupport-interface",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "3.6.4-1noble.20260911.050552"
+  },
+  "ros-jazzy-rosidl-typesupport-interface": {
+    "deb": "ros-jazzy-rosidl-typesupport-interface_4.6.9-1noble.20260612.045126_amd64.deb",
+    "depends": [
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "4.6.9-1noble.20260612.045126"
+  },
+  "ros-jazzy-rosidl-typesupport-introspection-c": {
+    "deb": "ros-jazzy-rosidl-typesupport-introspection-c_4.6.9-1noble.20260911.045954_amd64.deb",
+    "depends": [
+      "python3-dev",
+      "ros-jazzy-ament-cmake",
+      "ros-jazzy-ament-index-python",
+      "ros-jazzy-rosidl-cli",
+      "ros-jazzy-rosidl-cmake",
+      "ros-jazzy-rosidl-generator-c",
+      "ros-jazzy-rosidl-parser",
+      "ros-jazzy-rosidl-pycommon",
+      "ros-jazzy-rosidl-runtime-c",
+      "ros-jazzy-rosidl-typesupport-interface",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "4.6.9-1noble.20260911.045954"
+  },
+  "ros-jazzy-rosidl-typesupport-introspection-cpp": {
+    "deb": "ros-jazzy-rosidl-typesupport-introspection-cpp_4.6.9-1noble.20260911.050322_amd64.deb",
+    "depends": [
+      "python3-dev",
+      "ros-jazzy-ament-cmake",
+      "ros-jazzy-ament-index-python",
+      "ros-jazzy-rosidl-cli",
+      "ros-jazzy-rosidl-cmake",
+      "ros-jazzy-rosidl-generator-c",
+      "ros-jazzy-rosidl-generator-cpp",
+      "ros-jazzy-rosidl-parser",
+      "ros-jazzy-rosidl-pycommon",
+      "ros-jazzy-rosidl-runtime-c",
+      "ros-jazzy-rosidl-runtime-cpp",
+      "ros-jazzy-rosidl-typesupport-interface",
+      "ros-jazzy-rosidl-typesupport-introspection-c",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "4.6.9-1noble.20260911.050322"
+  },
+  "ros-jazzy-service-msgs": {
+    "deb": "ros-jazzy-service-msgs_2.0.4-1noble.20260911.051911_amd64.deb",
+    "depends": [
+      "libc6",
+      "libpython3.12t64",
+      "ros-jazzy-fastcdr",
+      "ros-jazzy-builtin-interfaces",
+      "ros-jazzy-rosidl-core-runtime",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "2.0.4-1noble.20260911.051911"
+  },
+  "ros-jazzy-std-msgs": {
+    "deb": "ros-jazzy-std-msgs_5.3.8-1noble.20260911.094424_amd64.deb",
+    "depends": [
+      "libc6",
+      "libgcc-s1",
+      "libpython3.12t64",
+      "libstdc++6",
+      "ros-jazzy-fastcdr",
+      "ros-jazzy-builtin-interfaces",
+      "ros-jazzy-rosidl-default-runtime",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "5.3.8-1noble.20260911.094424"
+  },
+  "ros-jazzy-unique-identifier-msgs": {
+    "deb": "ros-jazzy-unique-identifier-msgs_2.5.1-1noble.20260911.051544_amd64.deb",
+    "depends": [
+      "libc6",
+      "libpython3.12t64",
+      "ros-jazzy-fastcdr",
+      "ros-jazzy-rosidl-core-runtime",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "2.5.1-1noble.20260911.051544"
+  },
+  "ros-jazzy-vision-msgs": {
+    "deb": "ros-jazzy-vision-msgs_4.1.1-3noble.20260911.140407_amd64.deb",
+    "depends": [
+      "libc6",
+      "libgcc-s1",
+      "libpython3.12t64",
+      "libstdc++6",
+      "ros-jazzy-fastcdr",
+      "ros-jazzy-geometry-msgs",
+      "ros-jazzy-rosidl-default-runtime",
+      "ros-jazzy-std-msgs",
+      "ros-jazzy-ros-workspace"
+    ],
+    "version": "4.1.1-3noble.20260911.140407"
+  }
+}

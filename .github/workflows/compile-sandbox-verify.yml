@@ -1,0 +1,48 @@
+# 编译沙箱真实验证（L1「启动」层）
+#
+# 目的：在真实 ROS 2 Jazzy 容器里跑通 sandbox.verify()，产出
+#       「colcon build 成功 + 节点注册」的带时间戳证据（artifact），
+#       用于答辩时证明「生成的代码真的能编译、真的能起来」。
+#
+# 手动触发：仓库 Actions 页 → 本 workflow → Run workflow（答辩前跑一次留档）。
+# 也会在 push 到 main 时自动跑。
+
+name: compile-sandbox-verify
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    container: ros:jazzy-ros-base
+    timeout-minutes: 20
+    steps:
+      - name: 安装 colcon 与 git
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            python3-colcon-common-extensions \
+            git
+          rm -rf /var/lib/apt/lists/*
+
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 运行编译沙箱真实验证（L1 启动）
+        working-directory: app
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          ROS2_VERIFY_BACKEND=local python3 -X utf8 verify_ci.py
+
+      - name: 上传证据（结果 JSON + 日志）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compile-verify-evidence-${{ github.run_number }}
+          path: |
+            app/verify_result.json
+            app/verify.log
+          retention-days: 30
