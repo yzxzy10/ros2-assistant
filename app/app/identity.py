@@ -34,6 +34,27 @@ def _read_secret(path):
     return None
 
 
+def _write_secret(path):
+    """首次运行把密钥落盘到 data/.id_secret，重启/重新部署后仍读得到同一份。
+
+    写失败（只读文件系统等）返回 None，由调用方退回进程内随机，功能不中断。
+    """
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        key = secrets.token_hex(32).encode("ascii")
+        tmp = path + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(key)
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, path)
+        return key
+    except OSError:
+        return None
+
+
 def _secret():
     if _CACHE[0]:
         return _CACHE[0]
@@ -41,12 +62,17 @@ def _secret():
     if env:
         _CACHE[0] = env.encode("utf-8")
         return _CACHE[0]
-    # 数据目录 .id_secret 兜底（老部署遗留，或本地开发时手动放置的）。
-    key = _read_secret(os.path.join(paths.data(), ".id_secret"))
+    # 数据目录 .id_secret：已有则复用，没有则生成并落盘（跟随数据目录，重启不失效）。
+    path = os.path.join(paths.data(), ".id_secret")
+    key = _read_secret(path)
     if key:
         _CACHE[0] = key
         return key
-    # 都没有：进程内随机。重启后身份会重发，但功能不中断。
+    key = _write_secret(path)
+    if key:
+        _CACHE[0] = key
+        return key
+    # 落盘失败：进程内随机。重启后身份会重发，但功能不中断。
     _CACHE[0] = secrets.token_hex(32).encode("ascii")
     return _CACHE[0]
 
