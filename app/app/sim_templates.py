@@ -47,9 +47,13 @@ PACKAGE_XML = """<?xml version="1.0"?>
 EXTRA_DEPS_ARM = """  <exec_depend>controller_manager</exec_depend>
   <exec_depend>joint_state_broadcaster</exec_depend>
   <exec_depend>forward_command_controller</exec_depend>
-  <exec_depend>gz_ros2_control</exec_depend>"""
+  <exec_depend>gz_ros2_control</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>"""
 
-EXTRA_DEPS_DIFF = """  <exec_depend>teleop_twist_keyboard</exec_depend>"""
+EXTRA_DEPS_DIFF = """  <exec_depend>teleop_twist_keyboard</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>"""
 
 CMAKE_LISTS = """cmake_minimum_required(VERSION 3.8)
 project({{pkg}})
@@ -62,6 +66,10 @@ install(DIRECTORY urdf config launch worlds{{extra_dirs}}
 
 install(PROGRAMS scripts/selfcheck.py
         DESTINATION share/${PROJECT_NAME}/scripts)
+
+# 配套控制节点装进 lib/${PROJECT_NAME}，这样 ros2 run 能直接找到
+install(PROGRAMS {{demo_program}}
+        DESTINATION lib/${PROJECT_NAME})
 
 ament_package()
 """
@@ -952,3 +960,144 @@ ros2 topic echo /joint_states --once
 ros2 topic echo /odom --field pose.pose.position
 ```
 """
+
+
+# ---------------------------------------------------------------- 配套控制节点
+# 一次请求同时给「模型 + 能动它的代码」：没有这个节点，学生还得自己想
+# 怎么发指令，而「模型出来了但不动」正是这一类包最常见的第一道坎。
+# 代码用模板生成而不是让模型写：话题名、数组长度必须和生成的控制器严格对齐。
+
+DRIVE_DEMO = '''#!/usr/bin/env python3
+"""{{pkg}} 配套控制节点：让车按方形路线走一圈，然后停下。
+
+发布：/cmd_vel（geometry_msgs/Twist）
+用法：
+    ros2 launch {{pkg}} sim.launch.py      # 终端 A
+    ros2 run {{pkg}} drive_demo            # 终端 B
+
+转弯段同时给线速度和角速度，走的是圆弧——差速底盘和 Ackermann 都能照做，
+Ackermann 不能原地自转，这种写法不用为车型分叉。
+"""
+import math
+
+import rclpy
+from geometry_msgs.msg import Twist
+from rclpy.node import Node
+
+SPEED = 0.18      # 直行线速度 m/s：第一次跑别调大
+TURN = 0.7        # 转弯角速度 rad/s
+PERIOD = 0.05     # 20 Hz 够用；真机控制环另说
+
+
+class DriveDemo(Node):
+    def __init__(self):
+        super().__init__("drive_demo")
+        self.pub = self.create_publisher(Twist, "/cmd_vel", 10)
+        self.timer = self.create_timer(PERIOD, self.tick)
+        self.phase = 0          # 偶数直行、奇数转弯，走四条边
+        self.elapsed = 0.0
+
+    def tick(self):
+        msg = Twist()
+        if self.phase % 2 == 0:
+            msg.linear.x = SPEED
+            limit = 3.0                       # 每条边 3 秒
+        else:
+            msg.linear.x = SPEED * 0.6        # 边走边转 = 圆弧 90°
+            msg.angular.z = TURN
+            limit = (math.pi / 2.0) / TURN
+
+        self.pub.publish(msg)
+        self.elapsed += PERIOD
+        if self.elapsed < limit:
+            return
+
+        self.elapsed = 0.0
+        self.phase += 1
+        if self.phase >= 8:
+            self.stop("方形路线走完")
+            self.timer.cancel()
+
+    def stop(self, why=""):
+        self.pub.publish(Twist())             # 零速：别让车一直往前跑
+        if why:
+            self.get_logger().info("%s，已发零速停车" % why)
+
+
+def main():
+    rclpy.init()
+    node = DriveDemo()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.stop()                           # Ctrl-C 也要停
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
+ARM_DEMO = '''#!/usr/bin/env python3
+"""{{pkg}} 配套控制节点：让机械臂从零位摆到目标位，再回零。
+
+发布：/{{controller_name}}/commands（std_msgs/Float64MultiArray）
+数组长度必须等于该控制器的关节数（{{n_joints}} 个），顺序与
+config/controllers.yaml 的 joints 一致：
+    {{joint_list}}
+
+用法：
+    ros2 launch {{pkg}} sim.launch.py      # 终端 A
+    ros2 run {{pkg}} arm_demo              # 终端 B
+
+这是位置接口的单点指令，不是轨迹插值——所以看起来是「一下跳过去」。
+要平滑轨迹请换 JointTrajectoryController，这个概念在教学中会讲。
+"""
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float64MultiArray
+
+HOME = [{{home}}]
+TARGET = [{{target}}]
+STEP_SEC = 2.0
+
+
+class ArmDemo(Node):
+    def __init__(self):
+        super().__init__("arm_demo")
+        self.pub = self.create_publisher(
+            Float64MultiArray, "/{{controller_name}}/commands", 10)
+        self.seq = [HOME, TARGET, HOME]
+        self.idx = 0
+        self.timer = self.create_timer(STEP_SEC, self.tick)
+
+    def tick(self):
+        if self.idx >= len(self.seq):
+            self.timer.cancel()
+            self.get_logger().info("往返完成")
+            return
+        values = self.seq[self.idx]
+        self.pub.publish(Float64MultiArray(data=[float(v) for v in values]))
+        self.get_logger().info("第 %d 步：%s" % (self.idx + 1, values))
+        self.idx += 1
+
+
+def main():
+    rclpy.init()
+    node = ArmDemo()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
+'''

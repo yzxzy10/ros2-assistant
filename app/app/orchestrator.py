@@ -901,20 +901,48 @@ def _model_control(cfg, sess):
     return r
 
 
-def _sim_flow(cfg, sess, msg):
+def _is_sim_clarify_reply(msg):
+    """学生这句是不是在回答「哪类机器人」。
+
+    点了选项（「1. 差速底盘…」）或提到机型词都算；很短又不带问号的补充
+    （「两只轮子的那种」）也算。真正的提问（「这俩区别是什么」）不算。
+    """
+    t = (msg or "").strip()
+    if not t:
+        return False
+    if re.match(r"^[1-9][.、)）]\s*", t):
+        return True
+    if RE_SIM_ROBOT.search(t) or RE_SIM_MODEL.search(t):
+        return True
+    return len(t) <= 20 and not RE_SIM_ASK.search(t)
+
+
+def _sim_flow(cfg, sess, msg, retry=False):
     """仿真建模直通车：一句话需求 → 一整包可编译工程。
 
     与项目流水线的差别：这里不规划节点、不问三轮问题，直接把
     「描述 + 接线 + 配置」装出来，因为学生此刻要的是模型，不是业务逻辑。
+
+    retry=True 表示这是学生补充描述后的第二次尝试：仍判不出机型时不再追问，
+    按最接近的机型出包并标注——问两遍已经够多了。
     """
     sess.pending = None
     try:
-        res = wf_sim.run(cfg, msg)
+        res = wf_sim.run(cfg, msg, fallback=retry)
     except Exception as e:
         return _reply(
             "仿真建模这一步没跑通：`%s`\n\n"
             "把需求再说细一点可以重试，例如「生成一个两轮差速小车，轮径 5 厘米、轮距 32 厘米」。"
             % e, stages=["仿真建模"], sess=sess)
+
+    # 信息不够（判不出机型）：不生成，问清楚再动手
+    if res.get("need_more"):
+        nm = res["need_more"]
+        sess.pending = "sim_clarify"
+        sess.requirement_desc = msg
+        sess.save()
+        return _reply(nm["question"], options=nm.get("options") or [],
+                      options_mode="sim_clarify", stages=["仿真建模"], sess=sess)
 
     pkg = res["spec"]["package"]
     # 项目里「顺便生成模型」时不能覆盖项目包名，否则后续生成节点会写进仿真包
@@ -924,7 +952,9 @@ def _sim_flow(cfg, sess, msg):
     _remember_message(sess, msg)
 
     md = wf_sim.render_markdown(res)
-    r = _reply(md, options=[{"key": "1", "label": "下载整包 zip", "action": "zip"}],
+    # 模型与控制代码一起给：选项不再分「要模型 / 要代码」，点一次拿整包
+    r = _reply(md, options=[{"key": "1", "label": "下载整包（模型 + 控制代码）",
+                             "action": "zip"}],
                options_mode="model", stages=["仿真建模"], sess=sess)
     r["sim"] = {
         "package": pkg,
@@ -1376,6 +1406,16 @@ def _handle_locked(cfg, sess, message, images=None):
             return _gen_batch(cfg, sess, [])
         sess.pending = None
         # 不是"继续"就当普通消息处理
+
+    if sess.pending == "sim_clarify":
+        # 上一轮在问「要哪类机器人」：学生这句就是补充，拼回原需求再建模
+        base = sess.requirement_desc or ""
+        sess.pending = None
+        if _is_sim_clarify_reply(msg):
+            sess.save()
+            return _sim_flow(cfg, sess, (base + "\n【补充】" + msg).strip(), retry=True)
+        # 没在回答机型（是另起一个问题）：放开待办，照常往下路由
+        sess.save()
 
     if sess.pending == "model_fix":
         if re.search(r"^2|不用|先不|自己接|算了|不了", msg):

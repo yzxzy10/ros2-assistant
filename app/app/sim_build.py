@@ -25,10 +25,12 @@ def build(spec):
     """返回 {相对路径: 文件内容}。路径相对包根目录。"""
     arch = spec["archetype"]
     pkg = spec["package"]
+    demo_program = "scripts/arm_demo.py" if arch == "arm" else "scripts/drive_demo.py"
     files = {
         "package.xml": _package_xml(spec),
         "CMakeLists.txt": _render(T.CMAKE_LISTS, pkg=pkg,
-                                  extra_dirs=" meshes" if _has_mesh(spec) else ""),
+                                  extra_dirs=" meshes" if _has_mesh(spec) else "",
+                                  demo_program=demo_program),
         "worlds/empty.sdf": T.WORLD_EMPTY,
         "config/display.rviz": _rviz(spec),
         "launch/display.launch.py": _render(T.DISPLAY_LAUNCH, pkg=pkg),
@@ -114,6 +116,22 @@ def _has_mesh(spec):
     return bool(spec.get("real_mesh"))
 
 
+def _arm_target(j):
+    """示范节点用的目标位：夹在限位内、不贴边。
+
+    贴边会触发控制器限位告警，学生第一眼就看到红色提示，容易误以为包有问题。
+    """
+    try:
+        lo, hi = float(j["lower"]), float(j["upper"])
+    except (KeyError, TypeError, ValueError):
+        return 0.0
+    if j.get("type") == "prismatic":
+        v = (lo + hi) * 0.5
+    else:
+        v = 0.4 if hi > 0.4 else hi * 0.5
+    return max(lo, min(hi, v))
+
+
 def _build_arm(spec):
     """机械臂：偏置连杆 + 关节壳 + 可动夹爪（结构见 sim_arm）。"""
     pkg = spec["package"]
@@ -156,6 +174,14 @@ def _build_arm(spec):
         "launch/sim.launch.py": _render(
             T.ARM_SIM_LAUNCH, pkg=pkg, controller_name=spec["controller_name"],
             gripper_controller=grip_ctrl),
+        # 配套控制节点：数组长度必须与 arm_controller 的关节数一致，
+        # 所以这里用 js（主关节）算，不能算上夹爪的两指
+        "scripts/arm_demo.py": _render(
+            T.ARM_DEMO, pkg=pkg, controller_name=spec["controller_name"],
+            n_joints=len(js),
+            joint_list=", ".join(j["name"] for j in js),
+            home=", ".join(["0.0"] * len(js)),
+            target=", ".join("%.3f" % _arm_target(j) for j in js)),
     }
     out.update(mesh_files)      # 二进制网格：bytes
     return out
@@ -169,6 +195,7 @@ def _build_diff(spec):
     return {
         "urdf/%s.urdf.xacro" % pkg: sim_chassis.build_chassis_urdf(spec),
         "launch/sim.launch.py": _render(T.DIFF_SIM_LAUNCH, pkg=pkg),
+        "scripts/drive_demo.py": _render(T.DRIVE_DEMO, pkg=pkg),
     }
 
 

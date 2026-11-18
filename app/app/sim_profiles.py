@@ -113,7 +113,9 @@ PROFILES = {
 _KEYWORDS = [
     ("tb3_waffle", ("waffle", "华夫")),
     ("tb3_burger", ("burger", "汉堡")),
-    ("turtlebot3", ("turtlebot3", "turtlebot")),   # 不指定型号时给 waffle
+    # 只说 turtlebot3 不指定型号时给 waffle。target 必须是 PROFILES 里真实存在的键，
+    # 写成 "turtlebot3" 会在 PROFILES[...] 上抛 KeyError（曾经踩过）。
+    ("tb3_waffle", ("turtlebot3", "turtlebot")),
     ("linorobot2", ("linorobot",)),
     ("andino", ("andino",)),
     ("ur5e", ("ur5", "ur 5", "优傲")),

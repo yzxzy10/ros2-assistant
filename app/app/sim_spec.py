@@ -74,8 +74,21 @@ def _sanitize_pkg(name):
     return s[:40]
 
 
-def _pick_arch(raw):
-    """识别机型：先看 archetype 字段，再看别名表，最后按需求文本猜。"""
+class UnknownArchetype(ValueError):
+    """需求里看不出要哪种机型。
+
+    这里**不兜底**成差速底盘：学生说「帮我做个机器人」时，默认给他一辆
+    差速小车，比直接问一句更糟——他会拿到一个从没要过的模型，还得自己
+    发现不对。宁可停下来问一次机型。
+    """
+
+
+def _pick_arch(raw, allow_unknown=False):
+    """识别机型：先看 archetype 字段，再看别名表，最后按需求文本猜。
+
+    allow_unknown=True 时判不出返回空串（交由调用方追问），
+    否则沿用旧行为兜底 diff_drive（供离线单测与显式默认语义使用）。
+    """
     v = str(raw.get("archetype") or raw.get("type") or raw.get("robot_type") or "").strip().lower()
     if v in _ALIASES:
         return _ALIASES[v]
@@ -87,7 +100,7 @@ def _pick_arch(raw):
     # 有 links/joints 字段的多半是机械臂
     if raw.get("joints") or raw.get("links"):
         return "arm"
-    return "diff_drive"
+    return "" if allow_unknown else "diff_drive"
 
 
 def _norm_joint_type(v):
@@ -102,16 +115,19 @@ def _norm_axis(v):
     return ""  # 空表示按位置自动 alternating
 
 
-def normalize(raw):
+def normalize(raw, allow_unknown=False):
     """把模型输出的原始参数表收敛成规范结构。
 
     返回 dict，含 archetype / package / 几何 / 关节列表。
     不做任何 IO，纯函数，方便离线单测。
+
+    allow_unknown=True 时，机型判不出就抛 UnknownArchetype（由上层去问学生），
+    而不是默认给一个差速底盘。
     """
     if not isinstance(raw, dict):
         raise ValueError("参数表必须是 JSON 对象")
 
-    arch = _pick_arch(raw)
+    arch = _pick_arch(raw, allow_unknown=allow_unknown)
 
     # 机型档案：学生只要说「像 turtlebot3 那样」，尺寸/质量就按真机来
     pname, prof = sim_profiles.pick(raw)
@@ -122,6 +138,8 @@ def normalize(raw):
         arch = prof_arch
     if prof and prof_arch != arch:
         pname, prof = None, None      # 档案跟需求冲突时，以需求为准
+    if not arch:
+        raise UnknownArchetype("需求里没有可识别的机型")
     src = raw
     if prof:
         src = dict(prof)
