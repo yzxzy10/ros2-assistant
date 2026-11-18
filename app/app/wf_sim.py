@@ -24,16 +24,20 @@ from . import sim_build
 from . import sim_profiles
 from . import sim_gate
 from . import sim_spec
-from .prompts import SYS_SIM_SPEC, versioned
+from .kb import get_retriever
+from .prompts import SYS_SIM_SPEC, SYS_SIM_TEACHING, versioned
 from .wf_need import extract_json
 
 
 def run(cfg, message):
-    """返回 {spec, files, gate, degraded}。不写盘，落盘由 orchestrator 负责。"""
+    """返回 {spec, files, gate, degraded, teaching}。不写盘，落盘由 orchestrator 负责。"""
     spec, degraded = _analyze(cfg, message)
     files = _assemble(spec)
     gate = _gates(spec, files)
-    return {"spec": spec, "files": files, "gate": gate, "degraded": degraded}
+    # 闸门没过就先谈问题，别谈教学——学生此刻要的是能跑起来的包
+    teaching = _teach(cfg, spec, files) if gate["passed"] else ""
+    return {"spec": spec, "files": files, "gate": gate,
+            "degraded": degraded, "teaching": teaching}
 
 
 # ---------- 第一段：参数表 ----------
@@ -94,7 +98,96 @@ def _gates(spec, files):
         return gate
 
 
+# ---------- 第四段：教学说明 ----------
+# 与单节点流程（wf_code）保持同一套输出格式：代码/结构 + 🧑‍🏫 教学说明三段。
+# 学生拿到小车或机械臂时，最先想知道的是「这几个数字为什么这么填、
+# 为什么它在 Gazebo 里能走」，而不是文件清单。
+
+_TEACH_QUERY = ("URDF link joint 惯量 inertial ros2_control 硬件接口 "
+                "Gazebo 插件 差速控制器 关节限位")
+
+
+def _teaching_brief(spec, files):
+    """把工程压成一段模型看得懂的概要，避免把整包源码塞进提示词。"""
+    lines = ["机型：%s" % sim_spec.summary_lines(spec),
+             "包名：%s" % spec["package"],
+             "控制器：%s" % spec.get("controller_name", "")]
+    joints = spec.get("joints") or []
+    if joints:
+        desc = []
+        for j in joints:
+            unit = "m" if j["type"] == "prismatic" else "rad"
+            desc.append("%s（%s，%.2f ~ %.2f %s）" % (
+                j["name"], "平移" if j["type"] == "prismatic" else "转动",
+                j["lower"], j["upper"], unit))
+        lines.append("关节：%s" % "；".join(desc))
+    if spec.get("archetype") in ("diff_drive", "ackermann"):
+        lines.append("底盘参数：轮径 %.0f mm、轮距 %.0f mm、车体 %.0f×%.0f×%.0f mm" % (
+            spec["wheel_radius"] * 1000, spec["wheel_separation"] * 1000,
+            spec["base_length"] * 1000, spec["base_width"] * 1000,
+            spec["base_height"] * 1000))
+    # 控制器配置原文交给模型当事实依据：不给它看，它就爱按「差速 + 轮径」硬套机械臂
+    cy = files.get("config/controllers.yaml")
+    if isinstance(cy, str) and cy.strip():
+        lines.append("控制器配置 config/controllers.yaml：")
+        lines.append("```yaml")
+        lines.append(cy.strip()[:1200])
+        lines.append("```")
+    lines.append("文件：")
+    for p, n in sim_build.describe_files(files):
+        lines.append("- %s（%s）" % (p, "网格" if n is None else "%d 行" % n))
+    return "\n".join(lines)
+
+
+def _teach(cfg, spec, files):
+    """调教学模型写三段说明。失败不阻断出包——模型挂了也照样交付工程。"""
+    with agents.run("sim_engineer", "写仿真教学说明", artifact="教学说明"):
+        try:
+            kbcfg = cfg.get("kb") or {}
+            context, _n = get_retriever().context(
+                _TEACH_QUERY, top_k=kbcfg.get("top_k", 5),
+                max_chars=min(int(kbcfg.get("max_context_chars", 4500)), 3500))
+        except Exception:
+            context = ""
+        user = "【工程概要】\n%s\n\n【知识库参考资料】\n%s" % (
+            _teaching_brief(spec, files), context or "（空）")
+        try:
+            text = llm.chat(cfg, "teaching", versioned(SYS_SIM_TEACHING, cfg), user)
+            text = (text or "").strip()
+            if text:
+                progress.note("教学说明已生成（%d 字）" % len(text))
+            return text
+        except Exception as e:
+            progress.note("教学说明生成失败：%s" % e)
+            return ""
+
+
 # ---------- 渲染 ----------
+
+_EXCERPT_LINES = 46          # 主模型文件展示多少行：够看清结构，又不至于刷屏
+
+
+def _excerpt(files):
+    """挑主模型文件（urdf/<pkg>.urdf.xacro）作为「代码」展示。
+
+    单节点回复展示的是完整 .py；仿真包有十来个文件，全贴没法看，
+    这里给主描述文件的开头——机器人名、材质、底盘 link，正好是最该看的头部。
+    """
+    path = ""
+    for p in sorted(files):
+        if p.startswith("urdf/") and p.endswith(".urdf.xacro"):
+            path = p
+            break
+    if not path:
+        return None
+    text = files.get(path) or ""
+    if not isinstance(text, str) or not text.strip():
+        return None
+    lines = text.split("\n")
+    cut = len(lines) > _EXCERPT_LINES
+    body = "\n".join(lines[:_EXCERPT_LINES]).rstrip()
+    return {"path": path, "body": body, "total": len(lines), "cut": cut}
+
 
 def render_markdown(res):
     spec = res["spec"]
@@ -102,14 +195,36 @@ def render_markdown(res):
     files = res["files"]
     pkg = spec["package"]
 
+    # 骨架与单节点回复一致：标题 → 结构/代码 → 🧑‍🏫 教学说明 → 操作命令 → 版本行
     out = []
-    out.append("已生成 `%s`，共 **%d 个文件**。" % (pkg, len(files)))
+    out.append("## 仿真包：`%s`" % pkg)
     out.append("")
-    out.append("> %s" % sim_spec.summary_lines(spec))
+    out.append("%s · 共 **%d 个文件**" % (spec["archetype_name"], len(files)))
     if res.get("degraded"):
-        out.append(">")
+        out.append("")
         out.append("> ⚠️ %s" % res["degraded"])
 
+    ex = _excerpt(files)
+    if ex:
+        out.append("")
+        if ex["cut"]:
+            out.append("`%s`（前 %d 行，共 %d 行；完整内容在右侧文件树）："
+                       % (ex["path"], _EXCERPT_LINES, ex["total"]))
+        else:
+            out.append("`%s`：" % ex["path"])
+        out.append("")
+        out.append("```xml")
+        out.append(ex["body"])
+        out.append("```")
+
+    teaching = (res.get("teaching") or "").strip()
+    out.append("")
+    out.append("### 🧑‍🏫 教学说明")
+    out.append("")
+    out.append(teaching or "暂无教学内容")
+
+    out.append("")
+    out.append("### 工程文件")
     out.append("")
     out.append("| 文件 | 行数 |")
     out.append("|---|---|")
@@ -164,4 +279,6 @@ def render_markdown(res):
     out.append("")
     out.append("文件已写进工作区，右侧文件树能直接看，也可以整包下载。"
                "要改尺寸就改 xacro 顶部的 `xacro:property`，惯量会跟着重算。")
+    out.append("")
+    out.append("> %s" % sim_spec.summary_lines(spec))
     return "\n".join(out)
