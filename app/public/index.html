@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ROS2 学习助手 · Jazzy/Python</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="/static/style.css?v=69">
+<link rel="stylesheet" href="/static/style.css?v=70">
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/lib/common.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
@@ -210,6 +210,17 @@
             <textarea id="input" rows="1" placeholder="输入消息…（Enter 发送，Shift+Enter 换行，可直接粘贴截图）"></textarea>
             <button id="send">发送</button>
           </div>
+          <!-- 输入框末尾：识别到导入包里有 URDF/xacro 时出现，随时点进去预览 -->
+          <div id="model-hint" class="model-hint hidden">
+            <span class="mh-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/></svg>
+            </span>
+            <span class="mh-text">识别到模型 <b id="model-hint-name">—</b>，要预览吗？</span>
+            <button id="model-hint-open" type="button" class="mh-open">预览模型</button>
+            <button id="model-hint-close" type="button" class="mh-close" aria-label="收起提示" title="收起">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+            </button>
+          </div>
           <input id="img-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif"
                  multiple hidden>
           <input id="project-file" type="file" webkitdirectory multiple hidden>
@@ -223,6 +234,20 @@
 <div id="drawer-mask" class="hidden"></div>
 
 <div id="drop-mask" class="hidden"><span>松手即可导入项目（zip）或上传截图</span></div>
+
+<!-- 模型预览弹层：输入框末尾的入口点了就开，不用翻对话记录 -->
+<div id="model-modal" class="model-modal hidden" role="dialog" aria-modal="true" aria-label="模型预览">
+  <div class="mm-card">
+    <div class="mm-head">
+      <span class="mm-title">模型预览</span>
+      <span id="mm-sub" class="mm-sub"></span>
+      <button id="mm-close" class="mm-close" type="button" aria-label="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div id="mm-slot" class="mm-slot"></div>
+  </div>
+</div>
 
 <div id="token-gate" class="hidden">
   <div class="gate-card">
@@ -245,7 +270,7 @@
   }
 }
 </script>
-<script src="/static/app.js?v=69"></script>
+<script src="/static/app.js?v=70"></script>
 <script src="/static/viewer_babylon.js?v=69"></script>
 <script src="/static/graph.js?v=69"></script>
 <div id="auth-mask" class="auth-mask hidden" role="dialog" aria-modal="true"

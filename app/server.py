@@ -378,6 +378,8 @@ class Handler(BaseHTTPRequestHandler):
                     "files": sess.file_tree(),
                     "imported_project": project_import.to_json(
                         getattr(sess, "imported_project", None)),
+                    # 输入框末尾的「要不要预览模型」入口靠这个字段决定
+                    "models": model_scene.detect(sess),
                     "pending": sess.pending,
                     "level": sess.level,
                     "userId": sess.user_id,

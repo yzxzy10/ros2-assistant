@@ -1370,3 +1370,69 @@ g.vy-iso .gn-box { stroke-dasharray: 5 4; }
 [data-theme="dark"] .vy-inj.vy-inj-ok .vy-inj-box { fill: #052e24; stroke: #10b981; }
 [data-theme="dark"] .vy-inj.vy-inj-ok .vy-inj-t1 { fill: #6ee7b7; }
 [data-theme="dark"] .vy-inj.vy-inj-ok .vy-inj-t2 { fill: #a7f3d0; }
+
+/* ---------- 输入框末尾：模型预览入口 ---------- */
+/* 导入的包里带 URDF/xacro 时出现，用户想什么时候看就什么时候点，不必回头翻对话 */
+.model-hint {
+  display: flex; align-items: center; gap: 8px; margin-top: 2px;
+  padding: 6px 10px 6px 12px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--glass-strong);
+  font-size: 12.5px; color: var(--muted); line-height: 1.4;
+  animation: mh-in .2s ease-out;
+}
+@keyframes mh-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.mh-ico { width: 16px; height: 16px; flex: none; color: var(--accent); display: inline-flex; }
+.mh-ico svg { width: 100%; height: 100%; }
+.mh-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mh-text b { color: var(--text); font-weight: 600; }
+.mh-open {
+  flex: none; padding: 3px 12px; border-radius: 999px; font-size: 12px;
+  font-weight: 600; cursor: pointer; border: 1px solid var(--accent);
+  color: var(--accent); background: var(--accent-weak);
+  transition: filter .12s, transform .12s;
+}
+.mh-open:hover { filter: brightness(1.06); transform: translateY(-1px); }
+.mh-close {
+  flex: none; width: 20px; height: 20px; padding: 0; border: 0; cursor: pointer;
+  background: transparent; color: var(--muted); display: inline-flex;
+  align-items: center; justify-content: center; border-radius: 6px;
+}
+.mh-close svg { width: 11px; height: 11px; }
+.mh-close:hover { color: var(--text); background: var(--border); }
+
+/* ---------- 模型预览弹层 ---------- */
+.model-modal {
+  position: fixed; inset: 0; z-index: 60; padding: 22px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(9, 12, 20, 0.52); backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+.mm-card {
+  width: min(1060px, 96vw); height: min(740px, 88vh);
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 16px; box-shadow: var(--shadow-lg);
+}
+.mm-head {
+  display: flex; align-items: center; gap: 10px; flex: none;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.mm-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.mm-sub {
+  flex: 1; min-width: 0; font-size: 12px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.mm-close {
+  flex: none; width: 28px; height: 28px; padding: 0; border: 1px solid transparent;
+  border-radius: 8px; background: transparent; color: var(--muted);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.mm-close svg { width: 14px; height: 14px; }
+.mm-close:hover { color: var(--text); border-color: var(--border); background: var(--glass-strong); }
+.mm-slot { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+@media (max-width: 720px) {
+  .model-modal { padding: 8px; }
+  .mm-card { width: 100%; height: 92vh; }
+  .mh-text { white-space: normal; }
+}

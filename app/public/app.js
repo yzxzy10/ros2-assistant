@@ -378,8 +378,86 @@
   function refreshSession() {
     apiFetch("/api/session/" + sid)
       .then(function (r) { return r.json(); })
-      .then(function (d) { renderSidebar(d); })
+      .then(function (d) { renderSidebar(d); updateModelHint(d); })
       .catch(function (e) { handleAuthError(e); });
+  }
+
+  // ---------------- 输入框末尾的模型预览入口 ----------------
+  // 导入的包裹带 URDF/xacro 时，不必回头翻对话才能看模型：输入框末尾常驻一个
+  // 「预览模型」入口，随时点进去。收起只记在内存里（刷新会再提示，模型文件变了
+  // 也会再提示）；点了才建 WebGL 上下文，不点不花显存。
+  var modelHint = $("model-hint");
+  var modelHintName = $("model-hint-name");
+  var mmModal = $("model-modal"), mmSlot = $("mm-slot"), mmSub = $("mm-sub");
+  var modelInfo = null, mmMounted = "", hintOffSig = "";
+
+  function hintSig() {
+    return sid + "|" + ((modelInfo && modelInfo.files) || []).join(",");
+  }
+
+  // 服务端 /api/session/<sid> 返回的 models 字段：{available,count,files,package}
+  function updateModelHint(d) {
+    if (!modelHint) return;
+    var m = (d && d.models) || null;
+    modelInfo = (m && m.available) ? m : null;
+    if (!modelInfo || hintOffSig === hintSig()) {
+      modelHint.classList.add("hidden");
+      return;
+    }
+    var first = ((modelInfo.files || [])[0] || "").split("/").pop();
+    modelHintName.textContent = modelInfo.count > 1
+      ? first + " 等 " + modelInfo.count + " 个"
+      : first;
+    modelHint.classList.remove("hidden");
+  }
+
+  function mountModelPreview() {
+    if (!modelInfo || !mmSlot) return;
+    var sig = hintSig() + "|" + (modelInfo.package || "");
+    mmSub.textContent = (modelInfo.count || 0) + " 个模型文件" +
+      (modelInfo.package ? " · 包 " + modelInfo.package : "") +
+      " · 拖动旋转，滚轮缩放";
+    // 同一份模型不重复建场景：关掉再打开复用同一个上下文，省显存
+    if (mmMounted === sig) return;
+    mmMounted = sig;
+    mmSlot.innerHTML = "";
+    if (window.RTPreview) {
+      window.RTPreview.mount(mmSlot, sid, modelInfo.package || "");
+    } else {
+      mmSlot.innerHTML = '<div class="pv-lazy">3D 组件尚未加载，刷新页面再试</div>';
+    }
+  }
+  function openModelModal() {
+    if (!modelInfo || !mmModal) return;
+    mmModal.classList.remove("hidden");
+    mountModelPreview();
+  }
+
+  function closeModelModal() {
+    if (!mmModal) return;
+    mmModal.classList.add("hidden");
+  }
+
+  if (modelHint) {
+    var openBtn = $("model-hint-open"), closeBtn = $("model-hint-close");
+    if (openBtn) openBtn.onclick = openModelModal;
+    if (closeBtn) {
+      closeBtn.onclick = function () {
+        hintOffSig = hintSig();
+        modelHint.classList.add("hidden");
+      };
+    }
+  }
+  if (mmModal) {
+    var mmClose = $("mm-close");
+    if (mmClose) mmClose.onclick = closeModelModal;
+    // 点遮罩空白处关闭，点卡片内部不关
+    mmModal.addEventListener("click", function (e) {
+      if (e.target === mmModal) closeModelModal();
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !mmModal.classList.contains("hidden")) closeModelModal();
+    });
   }
 
   var sending = false;
@@ -1369,6 +1447,7 @@
       .then(function (r) { return r.json(); })
       .then(function (d) {
         renderSidebar(d);
+        updateModelHint(d);
         clearChat();
         // 回放用 transcript（含项目流水线），为空时退回 history，再空才欢迎语
         var hist = (d && d.transcript && d.transcript.length)
@@ -1420,6 +1499,12 @@
     if (window.RTGraph && window.RTGraph.verifyExit) window.RTGraph.verifyExit();
     sid = targetSid;
     localStorage.setItem("ros2tutor_sid", sid);
+    // 换了会话：旧模型信息与已挂载的 3D 场景都作废
+    modelInfo = null;
+    mmMounted = "";
+    hintOffSig = "";
+    if (mmSlot) mmSlot.innerHTML = "";
+    closeModelModal();
     loadCurrentSession().then(renderHistoryList);
     if (window.RTGraph) window.RTGraph.reload();   // 切会话必须同步刷新架构图
   }

@@ -459,6 +459,45 @@ def build_scene(sess, pkg=None):
     return result
 
 
+def _pkg_of_rel(rel):
+    """从相对路径猜模型所属包名：src/my_car/urdf/my_car.urdf → my_car。
+
+    猜不出来就返回空串 —— 前端据此只做「全部模型」预览，不会锁错包。
+    """
+    segs = (rel or "").split("/")
+    if "urdf" in segs:
+        i = segs.index("urdf")
+        if i >= 1:
+            return segs[i - 1]
+    if len(segs) >= 3 and segs[0] in ("src", "install"):
+        return segs[1]
+    return ""
+
+
+def detect(sess, pkg=None):
+    """轻量探测会话里有没有可预览的模型（只扫文件名，不解析 xacro）。
+
+    给前端「输入框末尾是否弹预览入口」用。刻意与 build_scene 分开：
+    每次打开会话都要问一次，不能为了弹个按钮去解析整套 URDF。
+    """
+    try:
+        cands = _candidates(sess)
+    except Exception:            # noqa: BLE001 — 探测失败就当没有，不影响主流程
+        cands = []
+    if pkg:
+        key = "/%s/" % pkg
+        hit = [(r, f) for r, f in cands if key in ("/" + r)]
+        if hit:
+            cands = hit
+    files = [rel for rel, _full in cands[:20]]
+    return {
+        "available": bool(files),
+        "count": len(files),
+        "files": files[:8],
+        "package": _pkg_of_rel(files[0]) if files else "",
+    }
+
+
 MESH_TOTAL_LIMIT = 24_000_000     # 一场预览最多带 24MB 网格（与离线演示页的 24MB 对齐）
                                   # 真实 CAD 机械臂/底盘整包网格常见 5–15MB，8MB 会把稍大的
                                   # 模型卡掉一半零件；24MB 在本地/局域网预览下仍可接受。
