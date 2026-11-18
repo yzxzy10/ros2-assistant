@@ -14,7 +14,6 @@ import os
 import re
 
 from . import llm
-from . import sandbox
 from . import progress
 from . import versions
 from .kb import get_retriever
@@ -142,57 +141,22 @@ def run(cfg, node_spec_input):
         res = res2
         passed = bool(res.get("passed"))
 
-    # 6. 编译验证（真实 colcon build + 节点启停）
-    #    AST 只查得到写法错误，查不到「msg 类型不存在」「setup.py 入口写错」
-    #    「节点一起来就崩」。这一步把真实编译器/运行时的报错拿回来，
-    #    有预算就回灌给修复器再生成一次。
-    def _run_verify(src):
-        with progress.step("verify", "编译验证",
-                           "在 ROS 2 %s 环境执行 colcon build" % versions.distro_name(cfg)):
-            v = sandbox.verify(cfg, src, spec)
-            if v.get("attempted"):
-                note = "编译%s" % ("通过" if v.get("build_ok", v.get("ok")) else "未通过")
-                if v.get("ok"):
-                    note = "编译 + 启动均通过 · %s" % (v.get("elapsed") or 0)
-                progress.note(note)
-            else:
-                progress.note("未执行：%s" % (v.get("reason") or "环境不支持"))
-            return v
-
-    _sb_backend, _sb_why = sandbox.resolve(cfg)
-    if code and _sb_backend != "none":
-        verify = _run_verify(code)
-    else:
-        # 编译环节整体静默：配置关闭或环境不支持时，进度和结果里
-        # 都不出现「编译验证」字样，输出保持干净。
-        verify = {
-            "attempted": False, "ok": False, "backend": "none", "stage": "",
-            "distro": versions.distro_name(cfg), "elapsed": 0.0,
-            "silent": True,
-            "reason": ("代码为空，跳过编译验证" if not code
-                       else (_sb_why or "环境不支持"))}
+    # 6. 生成阶段不做容器编译
+    #    以前每一轮都在容器里跑 colcon build + 起节点，进度条上固定挂一条
+    #    「编译验证」，一轮多花十几秒。教学/演示场景下这行字既拖时间又容易被
+    #    误解，所以从这里移除：生成完直接进教学说明。
+    #    真实编译仍然保留，只是改为由用户在架构图里手动点「编译运行」触发
+    #    （chain_verify 走独立开关，不受这里影响）。
+    #    silent=True 让 sandbox.summary_line() 只报 ROS 发行版，不提任何校验字样。
+    verify = {
+        "attempted": False, "ok": False, "backend": "none", "stage": "",
+        "distro": versions.distro_name(cfg), "elapsed": 0.0,
+        "silent": True,
+        "reason": "生成阶段不做容器编译",
+    }
+    # 编译失败回灌修复的循环一并停用：容器编译不在生成链里跑了，
+    # 这里只留字段给下游（orchestrator 按 attempted=False 走纯 AST 口径）。
     compile_rounds = 0
-    fix_budget = int(((cfg.get("ros") or {}).get("verify") or {}).get("fix_rounds") or 0)
-    while (verify.get("attempted") and not verify.get("ok")
-           and compile_rounds < fix_budget):
-        compile_rounds += 1
-        try:
-            fix_user = (
-                "以下 ROS2 代码在 ROS 2 %s 环境里没有通过编译/启动校验，请按真实日志修复。\n\n"
-                "【阶段】%s\n【原始代码】\n%s\n\n【编译器/运行时日志】\n%s\n\n"
-                "只输出修正后的完整代码，不要解释。"
-                % (versions.distro_name(cfg), verify.get("stage") or "build",
-                   code, (verify.get("log") or "（空）")[-1800:]))
-            fixed_raw = llm.chat(cfg, "coder_fix", versioned(SYS_CODE_FIXER, cfg), fix_user)
-        except Exception:
-            break
-        fixed = strip_fence(fixed_raw)
-        if not fixed:
-            break
-        res = check_code(fixed, json.dumps(spec, ensure_ascii=False))
-        passed = bool(res.get("passed"))
-        code = fixed
-        verify = _run_verify(code)
 
     # 7. 教学内容
     teach_user = ("【节点规格】\n%s\n\n【待讲解ROS2代码】\n%s\n\n【知识库参考资料】\n%s\n\n"

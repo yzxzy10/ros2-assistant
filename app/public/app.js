@@ -1301,7 +1301,7 @@
     });
   }
 
-  // 版本徽标：目标 ROS 发行版 + 编译验证后端 + 系统版本号
+  // 版本徽标：目标 ROS 发行版 + 系统版本号
   // 版本号一律由服务端 /api/meta 提供，前端不硬编码任何发行版名
   function renderVersion(v) {
     var box = $("ver-badge");
@@ -1310,18 +1310,11 @@
       box.innerHTML = '<span class="ver-row">版本信息不可用</span>';
       return;
     }
-    var sb = v.sandbox || {};
-    // 编译验证被显式关闭时，徽标里不再出现「编译验证」字样，避免答辩投影上的歧义
-    var back = sb.available
-      ? "编译验证：可用（" + (sb.backend || "?") + "）"
-      : (String(sb.reason || "").indexOf("关闭") >= 0
-          ? ""
-          : "编译验证：未启用（" + (sb.reason || "环境不支持") + "）");
+    // 徽标只交代环境与版本；后端校验能力不再在这里提（演示/投影时容易引起歧义）
     box.innerHTML =
       '<div class="ver-row"><b>' + (v.ros.short || "") + '</b>' +
       '<span class="ver-dim">Ubuntu ' + (v.ros.ubuntu || "") +
       ' · Python ' + (v.ros.python || "") + '</span></div>' +
-      (back ? '<div class="ver-row ver-dim">' + back + '</div>' : '') +
       '<div class="ver-row ver-dim">系统版本 v' + (v.app_version || "?") + '</div>';
   }
 

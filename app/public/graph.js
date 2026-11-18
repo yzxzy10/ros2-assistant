@@ -2568,7 +2568,7 @@
     var head = vyHeadId(st);
     if (head) vyInjector(head, "准备下发…");
     (st.mcus || []).forEach(function (m, i) { vyMcuNode(m, vyLastNode(st), i); });
-    if (!head) say("这张图没有起点节点，只能做整体编译验证", 6000);
+    if (!head) say("这张图没有起点节点，只能做整体校验", 6000);
     vyApply(st);
     setTimeout(function () { if (VY.on) fit(2); }, 60);
   }

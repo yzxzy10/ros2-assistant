@@ -948,7 +948,7 @@ def _warm(port):
         print("身份: %s" % identity.describe())
         print("限流: %s" % ratelimit.describe())
         sb = sandbox.status(cfg)
-        print("编译验证: %s" % ("可用（%s）" % sb["backend"] if sb["available"]
+        print("容器自检: %s" % ("可用（%s）" % sb["backend"] if sb["available"]
                                 else "未启用（%s）" % sb["reason"]))
         if not api_configured(cfg):
             print("[!] " + key_hint(cfg))

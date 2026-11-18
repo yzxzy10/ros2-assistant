@@ -4,8 +4,8 @@
 覆盖四件事：
   1. 版本单一事实来源：默认 Jazzy、可切 Humble、非法值回落、提示词注入；
   2. 沙箱后端的探测与降级：不可用时必须如实说「未执行」，绝不假通过；
-  3. 编译失败 → 真实日志回灌 → 重新生成 → 再校验 的闭环；
-  4. 界面/回复里的版本标注文案。
+  3. 生成阶段不再触发容器编译（verify 静默、compile_rounds 恒为 0）；
+  4. 界面/回复里的版本标注文案（不得出现「编译验证」字样）。
 
 跑法：python -X utf8 tests/sandbox_version_test.py
 """
@@ -106,7 +106,7 @@ r_bad = sandbox.verify(CFG, "import rclpy", {"node_name": "demo"})
 check("失败结果 ok=False", r_bad["ok"] is False)
 check("失败文案含「未通过」", "未通过" in sandbox.summary_line(r_bad), sandbox.summary_line(r_bad))
 
-print("\n=== 5. 编译失败 → 回灌 → 重生成 闭环 ===")
+print("\n=== 5. 生成阶段不再做容器编译 ===")
 seen_prompts = []
 
 
@@ -138,41 +138,34 @@ def fake_chat(cfg, role, system, user, **kw):
 llm_mod.chat = fake_chat
 wf_code.llm.chat = fake_chat
 
+# 生成阶段不应再调 sandbox.verify：这里挂个计数器，调一次就算失败
 calls = {"n": 0}
 real_verify = sandbox.verify
 
 
 def stub_verify(cfg, code, spec):
     calls["n"] += 1
-    if calls["n"] == 1:
-        return {"attempted": True, "ok": False, "backend": "docker", "distro": "jazzy",
-                "image": "ros:jazzy-ros-base", "stage": "build", "elapsed": 3.0,
-                "runtime_ok": False, "nodes": "",
-                "log": "ModuleNotFoundError: No module named 'rclpy.node'", "reason": "colcon build 失败"}
     return {"attempted": True, "ok": True, "backend": "docker", "distro": "jazzy",
             "image": "ros:jazzy-ros-base", "stage": "run", "elapsed": 9.5,
             "runtime_ok": True, "nodes": "/talker_node", "log": "", "reason": ""}
 
 
 sandbox.verify = stub_verify
-wf_code.sandbox.verify = stub_verify
 
 env = wf_code.run(CFG, json.dumps({"node_name": "talker_node"}, ensure_ascii=False))
 
-check("编译尝试了两次（初次 + 修复后）", calls["n"] == 2, str(calls))
-check("信封带 compile_rounds=1", env.get("compile_rounds") == 1, env.get("compile_rounds"))
-check("信封 verify.ok 为真", (env.get("verify") or {}).get("ok") is True, env.get("verify"))
+check("生成过程没有触发容器编译", calls["n"] == 0, "被调用 %d 次" % calls["n"])
+check("信封 compile_rounds=0", env.get("compile_rounds") == 0, env.get("compile_rounds"))
+v_env = env.get("verify") or {}
+check("信封 verify.attempted=False", v_env.get("attempted") is False, str(v_env))
+check("verify 走静默（不写校验字样）", v_env.get("silent") is True, str(v_env))
+check("仍然产出代码", bool(env.get("code")))
 check("信封标注目标发行版", env.get("distro") == "jazzy", env.get("distro"))
 check("信封 schema 升到 1.1", env.get("schema_version") == "1.1", env.get("schema_version"))
 
 fix_users = [u for r, _s, u in seen_prompts if r == "coder_fix"]
-compile_fix = [u for u in fix_users if "编译/启动校验" in u]
-check("至少发生一次编译失败修复", bool(compile_fix), "coder_fix 次数=%d" % len(fix_users))
-check("修复提示词带真实编译日志",
-      bool(compile_fix) and "ModuleNotFoundError" in compile_fix[0],
-      (compile_fix or [""])[0][:80])
-check("修复提示词声明发行版",
-      bool(compile_fix) and "ROS 2 jazzy" in compile_fix[0])
+check("没有编译日志回灌的修复轮", not [u for u in fix_users if "编译/启动校验" in u],
+      "coder_fix 次数=%d" % len(fix_users))
 coder_sys = [sysp for r, sysp, _u in seen_prompts if r == "coder"]
 check("代码生成提示词注入版本约束",
       any("【目标版本（硬约束）】" in (s or "") for s in coder_sys), "未注入")
@@ -180,7 +173,6 @@ check("教学提示词带目标版本", any("目标版本" in u for r, _s, u in 
 
 print("\n=== 6. 降级路径不阻断主流程 ===")
 sandbox.verify = real_verify
-wf_code.sandbox.verify = real_verify
 os.environ["ROS2_VERIFY_BACKEND"] = "none"
 env2 = wf_code.run(CFG, json.dumps({"node_name": "talker_node"}, ensure_ascii=False))
 check("无编译环境时仍产出代码", bool(env2.get("code")))

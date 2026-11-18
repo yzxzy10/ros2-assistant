@@ -68,9 +68,9 @@ def resolve(cfg):
     if env_want in ("docker", "local", "mock", "none"):
         want = env_want
     if want == "none":
-        return "none", str(vcfg.get("reason") or "编译验证已关闭（backend=none）")
+        return "none", str(vcfg.get("reason") or "自检已关闭（backend=none）")
     if not vcfg.get("enabled", True):
-        return "none", "配置里关闭了编译验证（ros.verify.enabled=false）"
+        return "none", "配置里关闭了自检（ros.verify.enabled=false）"
     if want == "mock":
         return "mock", "测试用模拟后端"
     if want == "docker":
@@ -302,7 +302,7 @@ def verify(cfg, code, spec):
     if backend == "none":
         return base
     if not (code or "").strip():
-        base["reason"] = "代码为空，跳过编译验证"
+        base["reason"] = "代码为空，跳过自检"
         return base
 
     pkg = _pkg_name(spec)
@@ -405,7 +405,7 @@ def summary_line(result):
     if not result.get("attempted"):
         if result.get("silent"):
             return name  # 编译环节被关闭：只报发行版，不提编译验证
-        return "%s · 编译验证：未执行（%s）" % (name, result.get("reason") or "未启用")
+        return "%s · 自检：未执行（%s）" % (name, result.get("reason") or "未启用")
     tag = "通过" if result.get("ok") else "未通过"
     stage_cn = {"build": "编译", "run": "启动", "env": "环境"}.get(result.get("stage"), "")
     extra = ""
@@ -413,5 +413,5 @@ def summary_line(result):
         extra = "（模拟后端，仅测试）"
     elif backend == "docker" and result.get("image"):
         extra = "（%s 镜像）" % result["image"]
-    return "%s · 编译验证：%s%s%s · %.1fs" % (
+    return "%s · 自检：%s%s%s · %.1fs" % (
         name, tag, ("·" + stage_cn) if stage_cn else "", extra, result.get("elapsed") or 0)
