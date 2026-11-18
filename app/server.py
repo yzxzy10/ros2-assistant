@@ -31,7 +31,7 @@ from app.kb import get_retriever
 from app import (orchestrator, store, archive, auth, env, paths,
                  identity, ratelimit, vision, versions, sandbox,
                  project_import, graph_api, agents, chain_verify, pkgcache,
-                 accounts, model_inspect, model_scene)
+                 accounts, model_inspect, model_scene, wiring)
 
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 PUBLIC = os.path.join(_ROOT, "public")
@@ -717,7 +717,30 @@ class Handler(BaseHTTPRequestHandler):
                 payload["files"] = sess.file_tree()
         except Exception as e:
             payload["inspect"] = {"error": "体检失败：%s" % e}
+
+        # 接线诊断：图上连好了还不够，要能说清「哪条线是断的、断在谁身上」。
+        # 独立于模型体检——纯代码包也要查，纯模型包也要说明「没有节点可查」。
+        # 模型数优先取导入时识别到的（不依赖体检是否成功），体检那份只作兜底。
+        try:
+            n_models = len((getattr(sess, "imported_project", None) or {}).get("models") or [])
+        except Exception:
+            n_models = 0
+        if not n_models:
+            try:
+                n_models = len((diag or {}).get("models") or [])
+            except Exception:
+                n_models = 0
+        payload["wiring"] = self._diagnose_wiring(sess, n_models)
         return payload
+
+    def _diagnose_wiring(self, sess, models=0):
+        """接线检查失败不该让导入失败：导入已经落盘了，这只是附加信息。"""
+        try:
+            return wiring.diagnose(sess.ws_root(), models=models)
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": "接线检查失败：%s" % e,
+                    "markdown": "", "issues": [], "stats": {},
+                    "counts": {"error": 0, "warn": 0, "info": 0}}
 
     def _project_import_zip(self, bound):
         """二进制直传 zip 导入：大 zip 走 raw body，避免 base64 JSON 膨胀。

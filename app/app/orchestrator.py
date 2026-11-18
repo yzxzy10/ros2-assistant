@@ -27,7 +27,7 @@ from .prompts import (MASTER_PERSONA, SYS_MASTER_ERROR, SYS_MASTER_CONCEPT,
                       SYS_MASTER_EXERCISE, SYS_MASTER_CHAT, SYS_MASTER_FAQ,
                       DIRECT_GUARD, SYS_SUMMARY, VISION_FALLBACK_NOTE,
                       versioned)
-from . import wf_need, wf_plan, wf_code, wf_sim, model_inspect
+from . import wf_need, wf_plan, wf_code, wf_sim, model_inspect, wiring
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -834,6 +834,35 @@ MODEL_CHECK_RE = re.compile(
     r"检查.{0,8}模型|模型.{0,6}(体检|检查|有没有|是否有|有什么)|体检|"
     r"我的模型|这个模型.{0,4}(对|错|问题|能用)|检查一下.{0,6}(urdf|xacro|模型)", re.I)
 
+# 接线类提问：导入后学生最常问的就是「为什么这两个节点连不上」
+WIRING_RE = re.compile(
+    r"接线|连不上|连不起来|没连上|没接上|断点|接不上|"
+    r"谁发布|谁订阅|话题关系|两边不对|图是空的", re.I)
+
+
+def _wiring_flow(cfg, sess):
+    """按当前项目重新做一次接线诊断。
+
+    不走模型：话题名、类型、文件行号都在代码里，静态解析比让模型看图准，
+    也给得出「改哪一行」。
+    """
+    with progress.step("wiring", "接线检查", "解析节点与话题的关系"):
+        models = len((sess.imported_project or {}).get("models") or [])
+        try:
+            rep = wiring.diagnose(sess.ws_root(), models=models)
+        except Exception as e:  # noqa: BLE001
+            return _reply("接线检查没跑通：`%s`" % e, stages=["接线检查"], sess=sess)
+        st = rep.get("stats") or {}
+        progress.note("%d 个节点 / %d 个话题 / %d 条连线" % (
+            st.get("nodes", 0), st.get("topics", 0), st.get("edges", 0)))
+
+    md = rep["markdown"]
+    errs = (rep.get("counts") or {}).get("error", 0)
+    if errs:
+        md += ("\n\n要我从第一条开始改吗？说一句「按第 1 条改」，我直接动代码；"
+               "也可以先把架构图打开，对照着看断在哪。")
+    return _reply(md, stages=["接线检查"], sess=sess)
+
 
 def _model_check(cfg, sess):
     """上传模型体检：结构 → 自动修 → 给出「是否补控制器」的选项。
@@ -1433,6 +1462,11 @@ def _handle_locked(cfg, sess, message, images=None):
     # 否则「检查一下这个话题」也会被拉进来。
     if _has_model(sess) and MODEL_CHECK_RE.search(msg):
         return _model_check(cfg, sess)
+
+    # 接线类提问：导入过项目才接。没导入时「连不上」多半在问别的东西
+    # （网络、SSH、WiFi），不该被拽进接线检查。
+    if sess.imported_project and WIRING_RE.search(msg):
+        return _wiring_flow(cfg, sess)
 
     # 2. 项目意图（带图时只看学生自己打的字，别被图里抄来的文字带跑）
     route_text = orig_text if (img_paths and orig_text) else msg

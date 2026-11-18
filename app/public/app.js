@@ -802,6 +802,10 @@
       importing = false;
       if (!d.ok) throw new Error(d.message || "导入失败");
       addMsg("assistant", md("✅ " + (d.message || "项目导入成功")));
+      // 接线检查：节点按话题关系连好之后，断在哪、谁在等谁，要逐条说清
+      if (d.wiring && d.wiring.markdown) {
+        addMsg("assistant", md(d.wiring.markdown));
+      }
       // 导入即体检：模型结构 + 控制层，修复结果已经在服务端落盘
       if (d.inspect && d.inspect.markdown) {
         addMsg("assistant", md(d.inspect.markdown));
